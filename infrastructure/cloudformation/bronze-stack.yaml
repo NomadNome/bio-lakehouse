@@ -1,0 +1,207 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Bio-Optimization Data Lakehouse - Bronze Layer
+  S3 buckets, Lambda ingestion trigger, DynamoDB ingestion log, IAM roles
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+  ProjectPrefix:
+    Type: String
+    Default: bio-lakehouse
+
+Resources:
+  # -------------------------------------------------------
+  # S3 Buckets
+  # -------------------------------------------------------
+  BronzeBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectPrefix}-bronze-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectPrefix
+        - Key: Layer
+          Value: bronze
+
+  BronzeBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BronzeBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyUnencryptedUploads
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:PutObject'
+            Resource: !Sub '${BronzeBucket.Arn}/*'
+            Condition:
+              StringNotEquals:
+                's3:x-amz-server-side-encryption': AES256
+
+  AthenaResultsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectPrefix}-athena-results-${AWS::AccountId}'
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAthenaResults
+            Status: Enabled
+            ExpirationInDays: 30
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectPrefix
+
+  # -------------------------------------------------------
+  # DynamoDB - Ingestion Log
+  # -------------------------------------------------------
+  IngestionLogTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    Properties:
+      TableName: bio_ingestion_log
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: file_path
+          AttributeType: S
+        - AttributeName: upload_timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: file_path
+          KeyType: HASH
+        - AttributeName: upload_timestamp
+          KeyType: RANGE
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectPrefix
+
+  # -------------------------------------------------------
+  # IAM Roles
+  # -------------------------------------------------------
+  IngestionLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectPrefix}-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: IngestionLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: S3ReadBronze
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:HeadObject'
+                Resource: !Sub 'arn:aws:s3:::${ProjectPrefix}-bronze-${AWS::AccountId}/*'
+              - Sid: DynamoDBWrite
+                Effect: Allow
+                Action:
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:UpdateItem'
+                Resource: !GetAtt IngestionLogTable.Arn
+              - Sid: GlueStartJob
+                Effect: Allow
+                Action:
+                  - 'glue:StartJobRun'
+                  - 'glue:GetJobRun'
+                Resource: '*'
+
+  # -------------------------------------------------------
+  # Lambda Function - Ingestion Trigger
+  # -------------------------------------------------------
+  IngestionTriggerFunction:
+    Type: AWS::Lambda::Function
+    DeletionPolicy: Retain
+    DependsOn: IngestionLambdaRole
+    Properties:
+      FunctionName: !Sub '${ProjectPrefix}-ingestion-trigger'
+      Runtime: python3.11
+      Handler: handler.lambda_handler
+      Role: !GetAtt IngestionLambdaRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          INGESTION_LOG_TABLE: !Ref IngestionLogTable
+          ENVIRONMENT: !Ref Environment
+          OURA_GLUE_JOB: !Sub '${ProjectPrefix}-oura-normalizer'
+          PELOTON_GLUE_JOB: !Sub '${ProjectPrefix}-peloton-normalizer'
+      Code:
+        ZipFile: |
+          # Inline stub - deploy full handler via aws lambda update-function-code
+          # See lambda/ingestion_trigger/handler.py for the real implementation
+          def lambda_handler(event, context):
+              print("Stub handler - deploy real code")
+              return {"statusCode": 200}
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectPrefix
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt IngestionTriggerFunction.Arn
+      Action: 'lambda:InvokeFunction'
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !Sub 'arn:aws:s3:::${ProjectPrefix}-bronze-${AWS::AccountId}'
+
+Outputs:
+  BronzeBucketName:
+    Description: Bronze layer S3 bucket
+    Value: !Ref BronzeBucket
+    Export:
+      Name: !Sub '${ProjectPrefix}-bronze-bucket'
+
+  BronzeBucketArn:
+    Description: Bronze bucket ARN
+    Value: !GetAtt BronzeBucket.Arn
+    Export:
+      Name: !Sub '${ProjectPrefix}-bronze-bucket-arn'
+
+  AthenaResultsBucketName:
+    Description: Athena query results bucket
+    Value: !Ref AthenaResultsBucket
+    Export:
+      Name: !Sub '${ProjectPrefix}-athena-results-bucket'
+
+  IngestionLogTableName:
+    Description: DynamoDB ingestion log table
+    Value: !Ref IngestionLogTable
+    Export:
+      Name: !Sub '${ProjectPrefix}-ingestion-log-table'
+
+  IngestionLambdaArn:
+    Description: Ingestion trigger Lambda ARN
+    Value: !GetAtt IngestionTriggerFunction.Arn
+    Export:
+      Name: !Sub '${ProjectPrefix}-ingestion-lambda-arn'

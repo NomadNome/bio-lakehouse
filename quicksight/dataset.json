@@ -1,0 +1,54 @@
+{
+  "DataSetId": "bio-gold-readiness-performance",
+  "Name": "Bio Gold - Daily Readiness & Performance",
+  "PhysicalTableMap": {
+    "AthenaTable": {
+      "CustomSql": {
+        "DataSourceArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:datasource/bio-athena-source",
+        "Name": "DailyReadinessPerformance",
+        "SqlQuery": "SELECT * FROM bio_gold.dashboard_30day",
+        "Columns": [
+          {"Name": "date", "Type": "STRING"},
+          {"Name": "readiness_score", "Type": "INTEGER"},
+          {"Name": "sleep_score", "Type": "INTEGER"},
+          {"Name": "activity_score", "Type": "INTEGER"},
+          {"Name": "combined_wellness_score", "Type": "DECIMAL"},
+          {"Name": "workout_count", "Type": "INTEGER"},
+          {"Name": "total_output_kj", "Type": "DECIMAL"},
+          {"Name": "total_workout_minutes", "Type": "INTEGER"},
+          {"Name": "avg_watts", "Type": "DECIMAL"},
+          {"Name": "max_avg_hr", "Type": "INTEGER"},
+          {"Name": "readiness_to_output_ratio", "Type": "DECIMAL"},
+          {"Name": "had_workout", "Type": "BIT"},
+          {"Name": "steps", "Type": "INTEGER"},
+          {"Name": "active_calories", "Type": "INTEGER"},
+          {"Name": "peloton_calories", "Type": "INTEGER"},
+          {"Name": "disciplines", "Type": "STRING"},
+          {"Name": "readiness_7day_avg", "Type": "DECIMAL"},
+          {"Name": "sleep_7day_avg", "Type": "DECIMAL"},
+          {"Name": "output_7day_avg", "Type": "DECIMAL"},
+          {"Name": "readiness_30day_avg", "Type": "DECIMAL"},
+          {"Name": "sleep_30day_avg", "Type": "DECIMAL"}
+        ]
+      }
+    }
+  },
+  "LogicalTableMap": {
+    "Main": {
+      "Alias": "DailyReadinessPerformance",
+      "Source": {
+        "PhysicalTableId": "AthenaTable"
+      },
+      "DataTransforms": [
+        {
+          "CastColumnTypeOperation": {
+            "ColumnName": "date",
+            "NewColumnType": "DATETIME",
+            "Format": "yyyy-MM-dd"
+          }
+        }
+      ]
+    }
+  },
+  "ImportMode": "SPICE"
+}

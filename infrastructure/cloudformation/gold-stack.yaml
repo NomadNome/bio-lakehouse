@@ -1,0 +1,146 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Bio-Optimization Data Lakehouse - Gold Layer
+  S3 bucket, Glue database, readiness aggregator ETL, EventBridge schedule
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+  ProjectPrefix:
+    Type: String
+    Default: bio-lakehouse
+
+Resources:
+  # -------------------------------------------------------
+  # S3 Bucket - Gold Layer
+  # -------------------------------------------------------
+  GoldBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectPrefix}-gold-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectPrefix
+        - Key: Layer
+          Value: gold
+
+  # -------------------------------------------------------
+  # Glue Database
+  # -------------------------------------------------------
+  GoldDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref 'AWS::AccountId'
+      DatabaseInput:
+        Name: bio_gold
+        Description: Gold layer - aggregated analytics and dashboard-ready datasets
+
+  # -------------------------------------------------------
+  # Glue ETL Job - Readiness Aggregator
+  # -------------------------------------------------------
+  ReadinessAggregatorJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub '${ProjectPrefix}-readiness-aggregator'
+      Role: !ImportValue
+        Fn::Sub: '${ProjectPrefix}-glue-role-arn'
+      GlueVersion: '4.0'
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      Timeout: 30
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub
+          - 's3://${SilverBucket}/scripts/readiness_aggregator.py'
+          - SilverBucket: !ImportValue
+              Fn::Sub: '${ProjectPrefix}-silver-bucket'
+        PythonVersion: '3'
+      DefaultArguments:
+        '--silver_bucket': !ImportValue
+          Fn::Sub: '${ProjectPrefix}-silver-bucket'
+        '--gold_bucket': !Ref GoldBucket
+        '--enable-metrics': 'true'
+        '--enable-continuous-cloudwatch-log': 'true'
+        '--job-language': python
+      Tags:
+        Project: !Ref ProjectPrefix
+
+  # -------------------------------------------------------
+  # Glue Crawler - Gold Layer
+  # -------------------------------------------------------
+  GoldCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: !Sub '${ProjectPrefix}-gold-crawler'
+      Role: !ImportValue
+        Fn::Sub: '${ProjectPrefix}-glue-role-arn'
+      DatabaseName: !Ref GoldDatabase
+      Targets:
+        S3Targets:
+          - Path: !Sub 's3://${GoldBucket}/daily_readiness_performance/'
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+      Tags:
+        Project: !Ref ProjectPrefix
+
+  # -------------------------------------------------------
+  # Glue Trigger - Daily 2AM UTC schedule
+  # -------------------------------------------------------
+  DailyAggregatorTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: !Sub '${ProjectPrefix}-daily-aggregator-trigger'
+      Type: SCHEDULED
+      Schedule: 'cron(0 2 * * ? *)'
+      StartOnCreation: true
+      Actions:
+        - JobName: !Ref ReadinessAggregatorJob
+
+  # -------------------------------------------------------
+  # IAM Policy - Allow Glue role to read/write Gold
+  # -------------------------------------------------------
+  GlueGoldAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub '${ProjectPrefix}-glue-gold-access'
+      Roles:
+        - !Sub '${ProjectPrefix}-glue-job-role'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - 's3:GetObject'
+              - 's3:PutObject'
+              - 's3:DeleteObject'
+              - 's3:ListBucket'
+            Resource:
+              - !GetAtt GoldBucket.Arn
+              - !Sub '${GoldBucket.Arn}/*'
+
+Outputs:
+  GoldBucketName:
+    Description: Gold layer S3 bucket
+    Value: !Ref GoldBucket
+    Export:
+      Name: !Sub '${ProjectPrefix}-gold-bucket'
+
+  GoldDatabaseName:
+    Description: Glue database for Gold layer
+    Value: !Ref GoldDatabase
+    Export:
+      Name: !Sub '${ProjectPrefix}-gold-database'
