@@ -5,9 +5,8 @@ Reads Bronze-layer Oura CSVs (readiness, sleep, activity), normalizes them,
 and writes partitioned Parquet to the Silver layer.
 
 Glue job arguments:
-  --source_bucket: Bronze S3 bucket name
-  --source_key: S3 key that triggered this job (optional, for incremental)
-  --source_type: oura/readiness, oura/sleep, etc.
+  --bronze_bucket: Bronze S3 bucket name
+  --silver_bucket: Silver S3 bucket name
 """
 
 import sys
@@ -26,6 +25,10 @@ glueContext = GlueContext(sc)
 spark = glueContext.spark_session
 job = Job(glueContext)
 
+# Disable automatic partition inference — our Bronze paths use year=/month=/day=
+# which Spark interprets as Hive partitions, shadowing the CSV 'day' column
+spark.conf.set("spark.sql.sources.partitionColumnTypeInference.enabled", "false")
+
 # Parse job arguments
 args = getResolvedOptions(
     sys.argv,
@@ -41,13 +44,23 @@ BRONZE_BUCKET = args["bronze_bucket"]
 SILVER_BUCKET = args["silver_bucket"]
 
 
+def read_bronze_csv(path):
+    """Read CSV with partition discovery disabled to avoid column shadowing."""
+    return (
+        spark.read
+        .option("header", "true")
+        .option("inferSchema", "false")
+        .option("basePath", path)
+        .option("recursiveFileLookup", "true")
+        .csv(path)
+    )
+
+
 def process_readiness():
     """Normalize Oura daily readiness data."""
     print("Processing Oura readiness data...")
 
-    df = spark.read.option("header", "true").option("inferSchema", "false").csv(
-        f"s3://{BRONZE_BUCKET}/oura/readiness/"
-    )
+    df = read_bronze_csv(f"s3://{BRONZE_BUCKET}/oura/readiness/")
 
     if df.rdd.isEmpty():
         print("No readiness data found, skipping")
@@ -61,11 +74,10 @@ def process_readiness():
     # Forward-fill missing readiness scores (Oura sometimes has gaps)
     df = forward_fill(df, partition_col=None, order_col="day", fill_cols=["score"])
 
-    # Parse day column for partitioning
+    # Extract partitioning columns from the CSV 'day' column (string: "2025-11-25")
     df = (
         df.withColumn("year", F.substring("day", 1, 4))
         .withColumn("month", F.substring("day", 6, 2))
-        .withColumn("day_of_month", F.substring("day", 9, 2))
     )
 
     # Write partitioned Parquet to Silver
@@ -79,9 +91,7 @@ def process_sleep():
     """Normalize Oura daily sleep data."""
     print("Processing Oura sleep data...")
 
-    df = spark.read.option("header", "true").option("inferSchema", "false").csv(
-        f"s3://{BRONZE_BUCKET}/oura/sleep/"
-    )
+    df = read_bronze_csv(f"s3://{BRONZE_BUCKET}/oura/sleep/")
 
     if df.rdd.isEmpty():
         print("No sleep data found, skipping")
@@ -91,7 +101,6 @@ def process_sleep():
 
     df = df.withColumn("score", F.col("score").cast("integer"))
 
-    # Parse partitioning columns
     df = (
         df.withColumn("year", F.substring("day", 1, 4))
         .withColumn("month", F.substring("day", 6, 2))
@@ -107,9 +116,7 @@ def process_activity():
     """Normalize Oura daily activity data."""
     print("Processing Oura activity data...")
 
-    df = spark.read.option("header", "true").option("inferSchema", "false").csv(
-        f"s3://{BRONZE_BUCKET}/oura/activity/"
-    )
+    df = read_bronze_csv(f"s3://{BRONZE_BUCKET}/oura/activity/")
 
     if df.rdd.isEmpty():
         print("No activity data found, skipping")
@@ -128,7 +135,6 @@ def process_activity():
         if col_name in df.columns:
             df = df.withColumn(col_name, F.col(col_name).cast("double"))
 
-    # Parse partitioning columns
     df = (
         df.withColumn("year", F.substring("day", 1, 4))
         .withColumn("month", F.substring("day", 6, 2))

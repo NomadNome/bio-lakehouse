@@ -79,7 +79,7 @@ def log_ingestion(file_path: str, metadata: dict) -> None:
     table.put_item(
         Item={
             "file_path": file_path,
-            "upload_timestamp": datetime.now(timezone.utc).isoformat(),
+            "upload_timestamp": int(datetime.now(timezone.utc).timestamp()),
             "source": metadata.get("source", "unknown"),
             "validation": metadata.get("validation", {}),
             "file_size": metadata.get("file_size", 0),

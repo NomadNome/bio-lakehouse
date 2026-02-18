@@ -71,54 +71,331 @@ ORDER BY date DESC;
 
 
 -- ============================================================
--- Query: Top Performance Days
--- Days with highest output relative to readiness
+-- View: Energy State Classification
+-- Identifies the "125% Energy" optimal state and classifies
+-- each day into actionable energy zones
 -- ============================================================
--- SELECT
---     date,
---     readiness_score,
---     sleep_score,
---     total_output_kj,
---     readiness_to_output_ratio,
---     workout_count,
---     disciplines,
---     avg_watts
--- FROM bio_gold.daily_readiness_performance
--- WHERE total_output_kj IS NOT NULL
---   AND readiness_score IS NOT NULL
--- ORDER BY readiness_to_output_ratio DESC
--- LIMIT 20;
+CREATE OR REPLACE VIEW bio_gold.energy_state AS
+SELECT
+    date,
+    readiness_score,
+    sleep_score,
+    CAST(contributors_hrv_balance AS integer) AS hrv_balance,
+    activity_score,
+    combined_wellness_score,
+    had_workout,
+    workout_count,
+    total_output_kj,
+    avg_watts,
+    disciplines,
+    -- Energy state classification
+    CASE
+        WHEN readiness_score >= 85 AND sleep_score >= 88
+             AND CAST(contributors_hrv_balance AS integer) >= 75
+            THEN 'peak'
+        WHEN readiness_score >= 85 AND sleep_score >= 80
+            THEN 'high'
+        WHEN readiness_score >= 70 AND sleep_score >= 65
+            THEN 'moderate'
+        WHEN readiness_score >= 50
+            THEN 'low'
+        ELSE 'recovery_needed'
+    END AS energy_state,
+    -- Human-readable guidance
+    CASE
+        WHEN readiness_score >= 85 AND sleep_score >= 88
+             AND CAST(contributors_hrv_balance AS integer) >= 75
+            THEN '125% Energy — Peak state. Go all out: HIIT, Tabata, hard cycling, or high-stakes interview prep.'
+        WHEN readiness_score >= 85 AND sleep_score >= 80
+            THEN 'High energy. Great for hard cycling, bootcamp, or deep technical study sessions.'
+        WHEN readiness_score >= 70 AND sleep_score >= 65
+            THEN 'Moderate energy. Good for endurance rides, strength training, or steady interview prep.'
+        WHEN readiness_score >= 50
+            THEN 'Low energy. Stick to yoga, stretching, or light walk. Avoid draining meetings.'
+        ELSE 'Recovery needed. Rest day or gentle meditation. No high-pressure activities.'
+    END AS guidance,
+    -- Readiness-to-output ratio zone
+    CASE
+        WHEN readiness_to_output_ratio > 4.0 THEN 'overreaching'
+        WHEN readiness_to_output_ratio >= 2.5 THEN 'high_performance'
+        WHEN readiness_to_output_ratio >= 1.5 THEN 'moderate'
+        WHEN readiness_to_output_ratio > 0 THEN 'undertrained'
+        ELSE 'no_workout'
+    END AS output_zone,
+    readiness_to_output_ratio,
+    -- Trailing indicators
+    AVG(readiness_score) OVER (ORDER BY date ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS readiness_3day_avg,
+    AVG(sleep_score) OVER (ORDER BY date ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS sleep_3day_avg,
+    -- Day-over-day readiness change
+    readiness_score - LAG(readiness_score, 1) OVER (ORDER BY date) AS readiness_delta,
+    sleep_score - LAG(sleep_score, 1) OVER (ORDER BY date) AS sleep_delta
+FROM bio_gold.daily_readiness_performance
+WHERE readiness_score IS NOT NULL;
 
 
 -- ============================================================
--- Query: Readiness-Output Correlation Analysis
--- Weekly aggregation for trend analysis
+-- View: Workout Type Optimization
+-- Answers: "Given my readiness level, which workout type
+-- historically produces the best output?"
 -- ============================================================
--- SELECT
---     date_trunc('week', CAST(date AS DATE)) AS week_start,
---     AVG(readiness_score) AS avg_readiness,
---     AVG(sleep_score) AS avg_sleep,
---     SUM(total_output_kj) AS weekly_output_kj,
---     COUNT(CASE WHEN had_workout THEN 1 END) AS workout_days,
---     AVG(avg_watts) AS avg_watts,
---     CORR(readiness_score, total_output_kj) AS readiness_output_correlation
--- FROM bio_gold.daily_readiness_performance
--- GROUP BY date_trunc('week', CAST(date AS DATE))
--- ORDER BY week_start DESC;
+CREATE OR REPLACE VIEW bio_gold.workout_type_optimization AS
+WITH workout_days AS (
+    SELECT
+        date,
+        readiness_score,
+        sleep_score,
+        CASE
+            WHEN readiness_score >= 85 THEN 'High (85+)'
+            WHEN readiness_score >= 70 THEN 'Medium (70-84)'
+            ELSE 'Low (<70)'
+        END AS readiness_bucket,
+        -- Extract primary discipline (first in comma-separated list)
+        CASE
+            WHEN disciplines LIKE '%Cycling%' AND disciplines NOT LIKE '%,%' THEN 'Cycling Only'
+            WHEN disciplines LIKE '%Strength%' AND disciplines NOT LIKE '%,%' THEN 'Strength Only'
+            WHEN disciplines LIKE '%Cycling%' AND disciplines LIKE '%Strength%' THEN 'Cycling + Strength'
+            WHEN disciplines LIKE '%Yoga%' OR disciplines LIKE '%Stretching%' OR disciplines LIKE '%Meditation%' THEN 'Recovery (Yoga/Stretch/Meditate)'
+            WHEN disciplines LIKE '%Cycling%' THEN 'Cycling + Other'
+            ELSE disciplines
+        END AS workout_type,
+        total_output_kj,
+        avg_watts,
+        total_workout_minutes,
+        peloton_calories,
+        max_avg_hr,
+        readiness_to_output_ratio
+    FROM bio_gold.daily_readiness_performance
+    WHERE had_workout = true
+      AND readiness_score IS NOT NULL
+)
+SELECT
+    readiness_bucket,
+    workout_type,
+    COUNT(*) AS sample_days,
+    ROUND(AVG(total_output_kj), 1) AS avg_output_kj,
+    ROUND(AVG(avg_watts), 1) AS avg_watts,
+    ROUND(AVG(peloton_calories), 0) AS avg_calories,
+    ROUND(AVG(total_workout_minutes), 0) AS avg_duration_min,
+    ROUND(AVG(max_avg_hr), 0) AS avg_max_hr,
+    ROUND(AVG(readiness_to_output_ratio), 2) AS avg_ratio,
+    ROUND(AVG(readiness_score), 1) AS avg_readiness_in_bucket,
+    ROUND(AVG(sleep_score), 1) AS avg_sleep_in_bucket
+FROM workout_days
+GROUP BY readiness_bucket, workout_type
+HAVING COUNT(*) >= 2
+ORDER BY readiness_bucket, avg_output_kj DESC;
 
 
 -- ============================================================
--- Query: Sleep Impact on Next-Day Performance
+-- View: Sleep-to-Performance Prediction
+-- Answers: "How does last night's sleep predict today's
+-- workout output and readiness?"
 -- ============================================================
--- SELECT
---     a.date,
---     a.sleep_score AS prev_night_sleep,
---     b.readiness_score AS next_day_readiness,
---     b.total_output_kj AS next_day_output,
---     b.avg_watts AS next_day_avg_watts
--- FROM bio_gold.daily_readiness_performance a
--- JOIN bio_gold.daily_readiness_performance b
---     ON CAST(b.date AS DATE) = DATE_ADD('day', 1, CAST(a.date AS DATE))
--- WHERE a.sleep_score IS NOT NULL
---   AND b.total_output_kj IS NOT NULL
--- ORDER BY a.sleep_score DESC;
+CREATE OR REPLACE VIEW bio_gold.sleep_performance_prediction AS
+SELECT
+    a.date AS sleep_date,
+    b.date AS performance_date,
+    a.sleep_score AS prev_night_sleep,
+    CASE
+        WHEN a.sleep_score >= 88 THEN 'Excellent (88+)'
+        WHEN a.sleep_score >= 75 THEN 'Good (75-87)'
+        WHEN a.sleep_score >= 60 THEN 'Fair (60-74)'
+        ELSE 'Poor (<60)'
+    END AS sleep_quality,
+    b.readiness_score AS next_day_readiness,
+    b.total_output_kj AS next_day_output,
+    b.avg_watts AS next_day_avg_watts,
+    b.had_workout AS next_day_worked_out,
+    b.disciplines AS next_day_disciplines,
+    b.combined_wellness_score AS next_day_wellness,
+    -- Sleep-to-readiness conversion efficiency
+    CASE
+        WHEN a.sleep_score > 0
+            THEN ROUND(CAST(b.readiness_score AS double) / a.sleep_score, 2)
+        ELSE NULL
+    END AS sleep_to_readiness_ratio
+FROM bio_gold.daily_readiness_performance a
+JOIN bio_gold.daily_readiness_performance b
+    ON COALESCE(
+        TRY(CAST(b.date AS date)),
+        TRY(date_parse(b.date, '%Y-%m-%d %H:%i:%s'))
+    ) = date_add('day', 1, COALESCE(
+        TRY(CAST(a.date AS date)),
+        TRY(date_parse(a.date, '%Y-%m-%d %H:%i:%s'))
+    ))
+WHERE a.sleep_score IS NOT NULL
+  AND b.readiness_score IS NOT NULL;
+
+
+-- ============================================================
+-- View: Readiness-Performance Correlation
+-- Statistical correlations between recovery metrics and output
+-- ============================================================
+CREATE OR REPLACE VIEW bio_gold.readiness_performance_correlation AS
+SELECT
+    'All Days' AS segment,
+    COUNT(*) AS sample_size,
+    ROUND(CORR(readiness_score, total_output_kj), 3) AS readiness_output_corr,
+    ROUND(CORR(sleep_score, total_output_kj), 3) AS sleep_output_corr,
+    ROUND(CORR(CAST(contributors_hrv_balance AS double), total_output_kj), 3) AS hrv_output_corr,
+    ROUND(CORR(sleep_score, readiness_score), 3) AS sleep_readiness_corr,
+    ROUND(AVG(readiness_score), 1) AS avg_readiness,
+    ROUND(AVG(sleep_score), 1) AS avg_sleep,
+    ROUND(AVG(total_output_kj), 1) AS avg_output_kj,
+    ROUND(AVG(avg_watts), 1) AS avg_watts
+FROM bio_gold.daily_readiness_performance
+WHERE had_workout = true
+  AND total_output_kj > 0
+  AND readiness_score IS NOT NULL
+
+UNION ALL
+
+SELECT
+    'High Readiness (85+)' AS segment,
+    COUNT(*) AS sample_size,
+    ROUND(CORR(readiness_score, total_output_kj), 3) AS readiness_output_corr,
+    ROUND(CORR(sleep_score, total_output_kj), 3) AS sleep_output_corr,
+    ROUND(CORR(CAST(contributors_hrv_balance AS double), total_output_kj), 3) AS hrv_output_corr,
+    ROUND(CORR(sleep_score, readiness_score), 3) AS sleep_readiness_corr,
+    ROUND(AVG(readiness_score), 1) AS avg_readiness,
+    ROUND(AVG(sleep_score), 1) AS avg_sleep,
+    ROUND(AVG(total_output_kj), 1) AS avg_output_kj,
+    ROUND(AVG(avg_watts), 1) AS avg_watts
+FROM bio_gold.daily_readiness_performance
+WHERE had_workout = true
+  AND total_output_kj > 0
+  AND readiness_score >= 85
+
+UNION ALL
+
+SELECT
+    'Low Readiness (<70)' AS segment,
+    COUNT(*) AS sample_size,
+    ROUND(CORR(readiness_score, total_output_kj), 3) AS readiness_output_corr,
+    ROUND(CORR(sleep_score, total_output_kj), 3) AS sleep_output_corr,
+    ROUND(CORR(CAST(contributors_hrv_balance AS double), total_output_kj), 3) AS hrv_output_corr,
+    ROUND(CORR(sleep_score, readiness_score), 3) AS sleep_readiness_corr,
+    ROUND(AVG(readiness_score), 1) AS avg_readiness,
+    ROUND(AVG(sleep_score), 1) AS avg_sleep,
+    ROUND(AVG(total_output_kj), 1) AS avg_output_kj,
+    ROUND(AVG(avg_watts), 1) AS avg_watts
+FROM bio_gold.daily_readiness_performance
+WHERE had_workout = true
+  AND total_output_kj > 0
+  AND readiness_score < 70;
+
+
+-- ============================================================
+-- View: Weekly Performance Trends
+-- Week-over-week progression with change indicators
+-- ============================================================
+CREATE OR REPLACE VIEW bio_gold.weekly_trends AS
+WITH weekly AS (
+    SELECT
+        date_trunc('week', COALESCE(
+            TRY(CAST(date AS date)),
+            TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
+        )) AS week_start,
+        AVG(readiness_score) AS avg_readiness,
+        AVG(sleep_score) AS avg_sleep,
+        AVG(combined_wellness_score) AS avg_wellness,
+        SUM(total_output_kj) AS weekly_output_kj,
+        SUM(peloton_calories) AS weekly_calories,
+        COUNT(CASE WHEN had_workout = true THEN 1 END) AS workout_days,
+        AVG(CASE WHEN had_workout = true THEN avg_watts END) AS avg_watts,
+        AVG(CASE WHEN had_workout = true THEN max_avg_hr END) AS avg_max_hr,
+        SUM(steps) AS weekly_steps,
+        SUM(active_calories) AS weekly_active_cal
+    FROM bio_gold.daily_readiness_performance
+    WHERE readiness_score IS NOT NULL
+    GROUP BY date_trunc('week', COALESCE(
+        TRY(CAST(date AS date)),
+        TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
+    ))
+)
+SELECT
+    week_start,
+    ROUND(avg_readiness, 1) AS avg_readiness,
+    ROUND(avg_sleep, 1) AS avg_sleep,
+    ROUND(avg_wellness, 1) AS avg_wellness,
+    ROUND(weekly_output_kj, 1) AS weekly_output_kj,
+    weekly_calories,
+    workout_days,
+    ROUND(avg_watts, 1) AS avg_watts,
+    ROUND(avg_max_hr, 0) AS avg_max_hr,
+    weekly_steps,
+    weekly_active_cal,
+    -- Week-over-week changes
+    ROUND(avg_readiness - LAG(avg_readiness) OVER (ORDER BY week_start), 1) AS readiness_change,
+    ROUND(avg_sleep - LAG(avg_sleep) OVER (ORDER BY week_start), 1) AS sleep_change,
+    ROUND(weekly_output_kj - LAG(weekly_output_kj) OVER (ORDER BY week_start), 1) AS output_change,
+    workout_days - LAG(workout_days) OVER (ORDER BY week_start) AS workout_days_change,
+    -- Trend indicator
+    CASE
+        WHEN avg_readiness > LAG(avg_readiness) OVER (ORDER BY week_start)
+             AND weekly_output_kj > LAG(weekly_output_kj) OVER (ORDER BY week_start)
+            THEN 'improving'
+        WHEN avg_readiness < LAG(avg_readiness) OVER (ORDER BY week_start)
+             AND weekly_output_kj < LAG(weekly_output_kj) OVER (ORDER BY week_start)
+            THEN 'declining'
+        WHEN avg_readiness < LAG(avg_readiness) OVER (ORDER BY week_start)
+             AND weekly_output_kj > LAG(weekly_output_kj) OVER (ORDER BY week_start)
+            THEN 'overreaching'
+        WHEN avg_readiness > LAG(avg_readiness) OVER (ORDER BY week_start)
+             AND weekly_output_kj < LAG(weekly_output_kj) OVER (ORDER BY week_start)
+            THEN 'recovering'
+        ELSE 'stable'
+    END AS trend
+FROM weekly
+ORDER BY week_start DESC;
+
+
+-- ============================================================
+-- View: Overtraining Risk Monitor
+-- Flags when you're pushing too hard relative to recovery
+-- ============================================================
+CREATE OR REPLACE VIEW bio_gold.overtraining_risk AS
+SELECT
+    date,
+    readiness_score,
+    sleep_score,
+    CAST(contributors_hrv_balance AS integer) AS hrv_balance,
+    combined_wellness_score,
+    total_output_kj,
+    workout_count,
+    disciplines,
+    readiness_to_output_ratio,
+    -- 3-day readiness trend (negative = declining)
+    readiness_score - AVG(readiness_score) OVER (ORDER BY date ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING) AS readiness_vs_3day,
+    -- Consecutive workout days
+    SUM(CASE WHEN had_workout = true THEN 1 ELSE 0 END)
+        OVER (ORDER BY date ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS workouts_last_3_days,
+    -- Risk assessment
+    CASE
+        WHEN readiness_score < 65
+             AND readiness_score < LAG(readiness_score, 1) OVER (ORDER BY date)
+             AND readiness_score < LAG(readiness_score, 2) OVER (ORDER BY date)
+            THEN 'high_risk'
+        WHEN readiness_score < 70
+             AND SUM(CASE WHEN had_workout = true THEN 1 ELSE 0 END)
+                 OVER (ORDER BY date ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) >= 3
+            THEN 'moderate_risk'
+        WHEN readiness_to_output_ratio > 4.0
+            THEN 'moderate_risk'
+        ELSE 'low_risk'
+    END AS overtraining_risk,
+    CASE
+        WHEN readiness_score < 65
+             AND readiness_score < LAG(readiness_score, 1) OVER (ORDER BY date)
+             AND readiness_score < LAG(readiness_score, 2) OVER (ORDER BY date)
+            THEN 'Readiness declining 3+ days in a row and below 65. Take a rest day.'
+        WHEN readiness_score < 70
+             AND SUM(CASE WHEN had_workout = true THEN 1 ELSE 0 END)
+                 OVER (ORDER BY date ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) >= 3
+            THEN 'Low readiness with 3 consecutive workout days. Schedule recovery.'
+        WHEN readiness_to_output_ratio > 4.0
+            THEN 'Output-to-readiness ratio is very high. You pushed hard despite low recovery.'
+        ELSE 'Recovery looks good. Train as planned.'
+    END AS risk_guidance
+FROM bio_gold.daily_readiness_performance
+WHERE readiness_score IS NOT NULL;
