@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bio Insights — Week of {{ week_start }}</title>
+    <style>
+        :root {
+            --bg: #1E1E2E;
+            --surface: #2D2D3F;
+            --text: #E2E8F0;
+            --text-muted: #94A3B8;
+            --primary: #6366F1;
+            --secondary: #EC4899;
+            --accent: #14B8A6;
+            --warning: #F59E0B;
+            --danger: #EF4444;
+            --success: #22C55E;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: Inter, system-ui, -apple-system, sans-serif;
+            line-height: 1.6;
+            padding: 2rem;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 2.5rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--surface);
+        }
+
+        header h1 {
+            font-size: 1.8rem;
+            color: var(--primary);
+            margin-bottom: 0.3rem;
+        }
+
+        header .subtitle {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .metric-card {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 1.2rem;
+            text-align: center;
+        }
+
+        .metric-card .value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .metric-card .label {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            margin-top: 0.2rem;
+        }
+
+        .metric-card.trend-up .value { color: var(--success); }
+        .metric-card.trend-down .value { color: var(--danger); }
+        .metric-card.trend-stable .value { color: var(--accent); }
+
+        section {
+            margin-bottom: 2rem;
+        }
+
+        section h2 {
+            font-size: 1.2rem;
+            color: var(--accent);
+            margin-bottom: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        section h2 .icon {
+            font-size: 1.1rem;
+        }
+
+        .narrative {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            line-height: 1.7;
+        }
+
+        .narrative p {
+            margin-bottom: 0.8rem;
+        }
+
+        .narrative p:last-child {
+            margin-bottom: 0;
+        }
+
+        .chart-container {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            text-align: center;
+        }
+
+        .chart-container img {
+            max-width: 100%;
+            border-radius: 8px;
+        }
+
+        .insight-card {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 1.2rem 1.5rem;
+            margin-bottom: 1rem;
+            border-left: 4px solid var(--primary);
+        }
+
+        .insight-card h3 {
+            font-size: 1rem;
+            color: var(--text);
+            margin-bottom: 0.4rem;
+        }
+
+        .insight-card p {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        .insight-card .caveats {
+            margin-top: 0.5rem;
+            font-size: 0.8rem;
+            color: var(--warning);
+            font-style: italic;
+        }
+
+        .recommendations {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border-left: 4px solid var(--success);
+        }
+
+        .recommendations ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .recommendations li {
+            padding: 0.4rem 0;
+            padding-left: 1.5rem;
+            position: relative;
+        }
+
+        .recommendations li::before {
+            content: "→";
+            position: absolute;
+            left: 0;
+            color: var(--success);
+        }
+
+        footer {
+            margin-top: 3rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--surface);
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+        }
+
+        footer a {
+            color: var(--primary);
+            text-decoration: none;
+        }
+
+        .stat-note {
+            background: var(--surface);
+            border-radius: 8px;
+            padding: 1rem 1.2rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Bio Insights Weekly Report</h1>
+    <div class="subtitle">{{ week_start }} — {{ week_end }} | Generated {{ generated_at }}</div>
+</header>
+
+<!-- Key Metrics -->
+<div class="metrics-grid">
+    {% for metric in key_metrics %}
+    <div class="metric-card {{ metric.trend_class }}">
+        <div class="value">{{ metric.value }}</div>
+        <div class="label">{{ metric.label }}</div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Claude-generated narrative -->
+<section>
+    <h2><span class="icon">📊</span> Week in Review</h2>
+    <div class="narrative">
+        {{ narrative_html }}
+    </div>
+</section>
+
+<!-- Individual insight cards -->
+{% for insight in insights %}
+<section>
+    <h2><span class="icon">{{ insight.icon }}</span> {{ insight.title }}</h2>
+    <div class="insight-card" style="border-left-color: {{ insight.color }};">
+        <p>{{ insight.narrative }}</p>
+        {% if insight.caveats %}
+        <div class="caveats">
+            {% for caveat in insight.caveats %}
+            {{ caveat }}{% if not loop.last %} | {% endif %}
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</section>
+{% endfor %}
+
+<!-- Statistical notes -->
+<div class="stat-note">
+    <strong>Statistical Notes:</strong> {{ stat_notes }}
+</div>
+
+<footer>
+    <p>Data: Oura Ring + Peloton | Bio-Optimization Insights Engine</p>
+    <p>Generated by <a href="#">Bio Lakehouse</a> on {{ generated_at }}</p>
+</footer>
+
+</body>
+</html>
