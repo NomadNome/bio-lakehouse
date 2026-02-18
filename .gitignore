@@ -36,3 +36,7 @@ logs/
 
 # Secrets
 .env
+.env.oura
+.oura-tokens.json
+*.pem
+*.key

@@ -19,6 +19,7 @@ Unlike synthetic demos, this system **runs daily against real data**, proving no
 
 ✅ **Infrastructure as Code** — CloudFormation stacks for Bronze/Silver/Gold layers with parameterized security  
 ✅ **Event-Driven ETL** — Lambda S3 triggers → Glue PySpark jobs → DynamoDB logging  
+✅ **Dual Ingestion Pipelines** — Serverless Lambda (Oura API) + OpenClaw automation (Peloton browser scraping) with 14 passing tests  
 ✅ **9 Gold Layer Views** — Pre-computed analytics (energy states, overtraining risk, correlations)  
 ✅ **AI-Native Query Interface** — Claude Sonnet translates natural language → Presto SQL with 95% accuracy  
 ✅ **5 Signature Insights** — Statistical analysis (Pearson correlation, Mann-Whitney U tests) with visualizations  
@@ -226,6 +227,154 @@ python scripts/run_weekly_report.py --local-only
 | `readiness_performance_correlation` | Pearson correlations segmented by readiness level |
 | `weekly_trends` | Week-over-week progression with trend indicators |
 | `overtraining_risk` | Overtraining risk flags based on readiness, HRV, and workout frequency |
+
+---
+## Data Ingestion Automation
+
+This project implements **two parallel ingestion strategies** for real-world biometric data:
+
+### 1. Serverless Lambda Ingestion (Oura API)
+
+**Architecture:** EventBridge scheduled trigger → Lambda → S3 Bronze → DynamoDB logging
+
+**Stack:** `infrastructure/cloudformation/oura-ingest-stack.yaml`
+
+- **Lambda Function:** `lambda/oura-api-ingest/` (Python 3.11)
+- **Schedule:** Daily at 9:00 AM EST (EventBridge rule)
+- **Endpoints:** 5 Oura API v2 endpoints (readiness, sleep, activity, heartrate, spo2)
+- **Authentication:** OAuth2 access token stored in AWS Systems Manager Parameter Store (SecureString)
+- **Error Handling:** Retry logic, token refresh, graceful degradation for missing data
+
+**Data Flow:**
+```
+EventBridge (daily 9am) → Lambda → Oura API v2 (7-day lookback)
+                                 ↓
+                         S3 Bronze (JSON) + DynamoDB log
+```
+
+**Key Files:**
+- `lambda/oura-api-ingest/handler.py` - Main event handler
+- `lambda/oura-api-ingest/oura_client.py` - API wrapper with retry logic
+- `lambda/oura-api-ingest/csv_transformer.py` - JSON → S3 transformer
+- `tests/unit/test-oura-lambda.js` - 8 unit tests (schema, encryption, date logic)
+- `tests/test-oura-lambda-integration.sh` - 6 integration tests (live AWS resources)
+
+**Security:**
+- IAM role with least-privilege permissions (S3 write, SSM read, DynamoDB write)
+- All S3 uploads use `SSE-AES256` encryption (bucket policy enforced)
+- OAuth tokens rotated via refresh flow (stored in `.oura-tokens.json` locally, never committed)
+
+**Setup:**
+```bash
+# 1. Create OAuth app at https://cloud.ouraring.com/oauth/applications
+# 2. Copy .env.oura.example to .env.oura and fill in credentials
+# 3. Deploy CloudFormation stack
+aws cloudformation deploy \
+  --template-file infrastructure/cloudformation/oura-ingest-stack.yaml \
+  --stack-name bio-lakehouse-oura-ingest \
+  --capabilities CAPABILITY_IAM \
+  --parameter-overrides \
+    OuraAccessToken=$(cat .env.oura | grep OURA_ACCESS_TOKEN | cut -d= -f2)
+
+# 4. Run tests
+node tests/unit/test-oura-lambda.js
+./tests/test-oura-lambda-integration.sh
+```
+
+### 2. OpenClaw Agent Automation (Peloton + Oura Backup)
+
+**Architecture:** OpenClaw cron → Browser automation (Peloton) OR bash script (Oura) → S3 upload
+
+**Why this approach?** Peloton has no public API; requires browser-based CSV export. OpenClaw provides headless browser control + cron scheduling.
+
+**Peloton Pipeline:**
+- **Schedule:** Weekly (Sundays 8:00 AM EST)
+- **Method:** OpenClaw browser tool opens Peloton members page, clicks "Download Workouts" button, waits for CSV
+- **Script:** `scripts/automation/peloton-sync.sh` uploads CSV to S3 with DynamoDB logging
+- **Documentation:** `scripts/automation/README-peloton.md`
+
+**Oura Backup Pipeline (redundancy):**
+- **Schedule:** Daily (9:00 AM EST, runs in parallel with Lambda)
+- **Method:** Direct Oura API calls via `curl` (bash script)
+- **Script:** `scripts/automation/oura-sync.sh` pulls 5 endpoints and uploads JSON to S3
+- **Purpose:** Fallback if Lambda fails; validates Lambda data consistency
+
+**Data Flow:**
+```
+OpenClaw Cron → Browser automation (Peloton) → Downloads folder
+                                              ↓
+                  peloton-sync.sh → S3 Bronze + DynamoDB log
+                                              ↓
+                                         WhatsApp notification
+
+OpenClaw Cron → oura-sync.sh → Oura API v2 → S3 Bronze (JSON) + DynamoDB log
+```
+
+**Key Features:**
+- **Zero-touch operation:** Fully automated once cron jobs are configured
+- **Idempotency:** S3 keys include timestamps; no overwrites
+- **Monitoring:** WhatsApp notifications on completion (via OpenClaw message tool)
+- **Cleanup:** Old CSV files auto-deleted after 7 days
+
+**Setup:**
+```bash
+# 1. Install OpenClaw: https://openclaw.ai
+# 2. Configure Oura credentials (same as Lambda setup)
+# 3. Update scripts with your S3 bucket and Peloton username
+export BRONZE_BUCKET="bio-lakehouse-bronze-YOUR_AWS_ACCOUNT"
+sed -i '' "s/YOUR_PELOTON_USERNAME/$YOUR_USERNAME/g" scripts/automation/peloton-sync.sh
+
+# 4. Schedule cron jobs via OpenClaw
+# See scripts/automation/README-peloton.md and README-oura.md for cron job creation
+
+# 5. Test manually
+./scripts/automation/peloton-manual-sync  # Triggers Peloton download
+./scripts/automation/oura-sync.sh         # Runs Oura sync immediately
+```
+
+### Test Coverage
+
+**Unit Tests (8):**
+- S3 key structure validation
+- Data transformation (API → S3 format)
+- DynamoDB schema compliance
+- Date range logic (7-day lookback)
+- Error response format
+- Endpoint coverage (all 5 Oura endpoints)
+- Encryption header validation (SSE-AES256)
+- Timestamp format (ISO 8601)
+
+**Integration Tests (6):**
+- Lambda function deployment verification
+- EventBridge rule configuration
+- SSM parameter (OAuth token) storage
+- Live Lambda invocation (test mode)
+- S3 file persistence
+- DynamoDB logging
+
+**Results:** ✅ All tests passing (see `tests/TEST-RESULTS.md`)
+
+### Ingestion Monitoring
+
+**DynamoDB `bio_ingestion_log` Table:**
+- Primary key: `file_path` (S3 URI)
+- Sort key: `upload_timestamp` (Unix epoch)
+- Metadata: `source`, `data_type`, `record_count`, `status`
+
+**Query Recent Ingestions:**
+```bash
+aws dynamodb scan \
+  --table-name bio_ingestion_log \
+  --filter-expression "#src = :source" \
+  --expression-attribute-names '{"#src": "source"}' \
+  --expression-attribute-values '{":source": {"S": "oura"}}' \
+  --max-items 10
+```
+
+**Current Status (as of 2026-02-18):**
+- Lambda ingestion: Operational (deployed, tested)
+- Peloton cron: Operational (834 workouts uploaded)
+- Oura cron: Operational (422 records: 7 readiness, 7 sleep, 6 activity, 395 HR, 7 SpO2)
 
 ---
 

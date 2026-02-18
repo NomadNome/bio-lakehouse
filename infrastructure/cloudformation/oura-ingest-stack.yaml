@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Bio Lakehouse - Oura API Automated Ingestion
+  Lambda function, EventBridge daily cron, SSM parameter, IAM role
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+  ProjectPrefix:
+    Type: String
+    Default: bio-lakehouse
+
+Resources:
+  # -------------------------------------------------------
+  # SSM Parameter - Oura API Token (placeholder)
+  # -------------------------------------------------------
+  OuraApiTokenParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /bio-lakehouse/oura-api-token
+      Type: String
+      Value: REPLACE_WITH_OURA_PAT
+      Description: >
+        Oura Personal Access Token. After stack deployment, update with:
+        aws ssm put-parameter --name /bio-lakehouse/oura-api-token
+        --type SecureString --value "YOUR_TOKEN" --overwrite
+
+  # -------------------------------------------------------
+  # IAM Role
+  # -------------------------------------------------------
+  OuraIngestLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectPrefix}-oura-ingest-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: OuraIngestPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: S3WriteBronzeOura
+                Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: !Sub 'arn:aws:s3:::${ProjectPrefix}-bronze-${AWS::AccountId}/oura/*'
+              - Sid: SSMReadToken
+                Effect: Allow
+                Action:
+                  - 'ssm:GetParameter'
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/bio-lakehouse/oura-api-token'
+
+  # -------------------------------------------------------
+  # Lambda Function
+  # -------------------------------------------------------
+  OuraApiIngestFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: OuraIngestLambdaRole
+    Properties:
+      FunctionName: !Sub '${ProjectPrefix}-oura-api-ingest'
+      Runtime: python3.11
+      Handler: handler.lambda_handler
+      Role: !GetAtt OuraIngestLambdaRole.Arn
+      Timeout: 120
+      MemorySize: 256
+      Environment:
+        Variables:
+          SSM_TOKEN_PARAM: !Ref OuraApiTokenParam
+          BRONZE_BUCKET: !Sub '${ProjectPrefix}-bronze-${AWS::AccountId}'
+      Code:
+        ZipFile: |
+          # Inline stub - deploy full handler via aws lambda update-function-code
+          # See lambda/oura_api_ingest/handler.py for the real implementation
+          def lambda_handler(event, context):
+              print("Stub handler - deploy real code")
+              return {"statusCode": 200}
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectPrefix
+        - Key: Component
+          Value: oura-ingest
+
+  # -------------------------------------------------------
+  # EventBridge Rule - Daily 6AM UTC
+  # -------------------------------------------------------
+  DailyOuraIngestRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectPrefix}-oura-daily-ingest'
+      Description: Trigger Oura API ingestion daily at 6AM UTC
+      ScheduleExpression: 'cron(0 6 * * ? *)'
+      State: ENABLED
+      Targets:
+        - Id: OuraIngestTarget
+          Arn: !GetAtt OuraApiIngestFunction.Arn
+
+  # -------------------------------------------------------
+  # Lambda Permission for EventBridge
+  # -------------------------------------------------------
+  OuraIngestEventBridgePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt OuraApiIngestFunction.Arn
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailyOuraIngestRule.Arn
+
+Outputs:
+  OuraIngestFunctionName:
+    Description: Oura API ingest Lambda function name
+    Value: !Ref OuraApiIngestFunction
+    Export:
+      Name: !Sub '${ProjectPrefix}-oura-ingest-function'
+
+  OuraIngestFunctionArn:
+    Description: Oura API ingest Lambda ARN
+    Value: !GetAtt OuraApiIngestFunction.Arn
+    Export:
+      Name: !Sub '${ProjectPrefix}-oura-ingest-function-arn'
+
+  DailyIngestRuleArn:
+    Description: EventBridge daily cron rule ARN
+    Value: !GetAtt DailyOuraIngestRule.Arn
+

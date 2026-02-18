@@ -1,0 +1,22 @@
+#!/bin/bash
+# Manual trigger for fully automated Peloton sync
+# Triggers the cron job immediately (no clicking required!)
+
+set -euo pipefail
+
+JOB_ID="3eb97ba7-b7f6-4b6d-bb83-6151711fbc01"
+
+echo "🏋️  Triggering Peloton sync now..."
+echo ""
+
+# Trigger the cron job immediately
+openclaw cron run "$JOB_ID" 2>&1
+
+if [[ $? -eq 0 ]]; then
+  echo ""
+  echo "✅ Sync triggered! Check WhatsApp for results in ~1 minute."
+else
+  echo ""
+  echo "❌ Failed to trigger. Try manually:"
+  echo "   openclaw sessions send --message 'Run full Peloton sync'"
+fi
