@@ -131,7 +131,7 @@ if page == "💬 Ask":
                     st.code(msg["sql"], language="sql")
             if msg.get("data") is not None and not msg["data"].empty:
                 with st.expander(f"Show Data ({len(msg['data'])} rows)"):
-                    st.dataframe(msg["data"], use_container_width=True)
+                    st.dataframe(msg["data"], width="stretch")
 
     # Chat input
     if question := st.chat_input("e.g., What was my average readiness last week?"):
@@ -164,7 +164,7 @@ if page == "💬 Ask":
                         # Data table
                         if not result.data.empty:
                             with st.expander(f"Show Data ({result.row_count} rows)"):
-                                st.dataframe(result.data, use_container_width=True)
+                                st.dataframe(result.data, width="stretch")
 
                         # Metadata
                         cols = st.columns(3)
@@ -248,7 +248,7 @@ elif page == "📊 Insights":
         st.markdown(result.narrative)
 
         if result.chart:
-            st.plotly_chart(result.chart, use_container_width=True)
+            st.plotly_chart(result.chart, width="stretch")
 
         if result.caveats:
             with st.expander("Statistical Notes"):
