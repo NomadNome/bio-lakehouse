@@ -4,3 +4,10 @@
 boto3>=1.34.0
 moto>=5.0.0        # AWS service mocking for tests
 pytest>=8.0.0
+
+# Insights Engine
+anthropic>=0.40.0
+streamlit>=1.40.0
+pandas>=2.0.0
+plotly>=5.0.0
+python-dotenv>=1.0.0

@@ -3,16 +3,22 @@ Bio Insights Engine - Configuration
 """
 
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from project root (Bio Lakehouse/)
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # AWS Configuration
 AWS_CONFIG = {
     "athena_database": os.environ.get("BIO_ATHENA_DATABASE", "bio_gold"),
     "athena_results_bucket": os.environ.get(
         "BIO_ATHENA_RESULTS_BUCKET",
-        "bio-lakehouse-athena-results-000000000000",
+        "bio-lakehouse-athena-results-ACCOUNT_ID",
     ),
     "gold_bucket": os.environ.get(
-        "BIO_S3_GOLD_BUCKET", "bio-lakehouse-gold-000000000000"
+        "BIO_S3_GOLD_BUCKET", "bio-lakehouse-gold-ACCOUNT_ID"
     ),
     "aws_region": os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
 }

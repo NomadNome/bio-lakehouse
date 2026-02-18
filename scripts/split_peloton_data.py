@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 # Source and output
-PELOTON_CSV = Path(__file__).parent.parent / "KnownasNoma_workouts.csv"
+PELOTON_CSV = Path(__file__).parent.parent / "peloton_workouts.csv"
 OUTPUT_DIR = Path(__file__).parent.parent / "bronze_staged"
 
 # Timestamp patterns:

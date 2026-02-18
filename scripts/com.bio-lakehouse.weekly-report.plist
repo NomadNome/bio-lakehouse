@@ -8,7 +8,8 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/scripts/run_weekly_report.py</string>
+        <!-- UPDATE: Replace with your actual project path -->
+        <string>$HOME/Desktop/Bio Lakehouse/scripts/run_weekly_report.py</string>
     </array>
 
     <!-- Monday at 7:00 AM EST (12:00 UTC) -->
@@ -31,11 +32,14 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/logs/weekly-report.log</string>
+    <!-- UPDATE: Replace with your actual project path -->
+    <string>$HOME/Desktop/Bio Lakehouse/logs/weekly-report.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/logs/weekly-report-error.log</string>
+    <!-- UPDATE: Replace with your actual project path -->
+    <string>$HOME/Desktop/Bio Lakehouse/logs/weekly-report-error.log</string>
 
     <key>WorkingDirectory</key>
-    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse</string>
+    <!-- UPDATE: Replace with your actual project path -->
+    <string>$HOME/Desktop/Bio Lakehouse</string>
 </dict>
 </plist>

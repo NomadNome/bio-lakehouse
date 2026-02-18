@@ -27,3 +27,12 @@ venv/
 # AWS
 .aws-sam/
 samconfig.toml
+
+# Generated output
+reports_output/
+bronze_staged/
+logs/
+*.db
+
+# Secrets
+.env
