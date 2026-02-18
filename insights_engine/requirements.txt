@@ -1,0 +1,7 @@
+streamlit
+plotly
+anthropic
+boto3
+pandas
+scipy
+jinja2
