@@ -206,6 +206,12 @@
     <div class="subtitle">{{ week_start }} — {{ week_end }} | Generated {{ generated_at }}</div>
 </header>
 
+{% if staleness_warning %}
+<div class="stat-note" style="border-left: 4px solid var(--warning); margin-bottom: 1.5rem;">
+    <strong>⚠ Data Staleness Warning:</strong> {{ staleness_warning }}
+</div>
+{% endif %}
+
 <!-- Key Metrics -->
 <div class="metrics-grid">
     {% for metric in key_metrics %}
@@ -228,6 +234,11 @@
 {% for insight in insights %}
 <section>
     <h2><span class="icon">{{ insight.icon }}</span> {{ insight.title }}</h2>
+    {% if insight.chart_b64 %}
+    <div class="chart-container">
+        <img src="data:image/png;base64,{{ insight.chart_b64 }}" alt="{{ insight.title }} chart">
+    </div>
+    {% endif %}
     <div class="insight-card" style="border-left-color: {{ insight.color }};">
         <p>{{ insight.narrative }}</p>
         {% if insight.caveats %}

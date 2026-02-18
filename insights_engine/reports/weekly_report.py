@@ -2,11 +2,13 @@
 Bio Insights Engine - Weekly Report Generator
 
 Orchestrates all 5 insight analyzers, generates a narrative via Claude,
-and renders an HTML report.
+and renders an HTML report with embedded chart images.
 """
 
 from __future__ import annotations
 
+import base64
+import io
 import os
 import time
 from dataclasses import dataclass, field
@@ -17,7 +19,7 @@ import anthropic
 import pandas as pd
 from jinja2 import Environment, FileSystemLoader
 
-from insights_engine.config import CLAUDE_CONFIG
+from insights_engine.config import CHART_CONFIG, CLAUDE_CONFIG
 from insights_engine.core.athena_client import AthenaClient
 from insights_engine.insights.base import DateRange, InsightResult
 from insights_engine.insights.sleep_readiness import SleepReadinessAnalyzer
@@ -54,6 +56,23 @@ class ReportResult:
     metadata: dict = field(default_factory=dict)
 
 
+def _fig_to_base64(fig) -> str | None:
+    """Render a Plotly figure to a base64-encoded PNG string."""
+    if fig is None:
+        return None
+    try:
+        img_bytes = fig.to_image(
+            format="png",
+            width=CHART_CONFIG["export_width"],
+            height=CHART_CONFIG["export_height"],
+            scale=CHART_CONFIG["export_scale"],
+        )
+        return base64.b64encode(img_bytes).decode("utf-8")
+    except Exception as e:
+        print(f"  WARNING: Chart export failed: {e}")
+        return None
+
+
 class WeeklyReportGenerator:
     """Runs all insight analyzers and compiles a weekly HTML report."""
 
@@ -80,9 +99,8 @@ class WeeklyReportGenerator:
         if week_ending is None:
             week_ending = date.today()
         week_start = week_ending - timedelta(days=6)
-        date_range = DateRange(start=week_start, end=week_ending)
 
-        # Run all analyzers (use full date range for context, not just this week)
+        # Run all analyzers
         print("Running insight analyzers...")
         insights = []
         for analyzer in self.analyzers:
@@ -102,9 +120,21 @@ class WeeklyReportGenerator:
         # Get key metrics for this week
         key_metrics = self._get_key_metrics(week_start, week_ending)
 
+        # Check data staleness
+        staleness_warning = self._check_staleness()
+
         # Generate narrative via Claude
         print("Generating narrative via Claude...")
         narrative = self._generate_narrative(insights, week_start, week_ending)
+
+        # Render chart images as base64
+        print("Rendering chart images...")
+        chart_images = {}
+        for r in insights:
+            if r.chart is not None:
+                b64 = _fig_to_base64(r.chart)
+                if b64:
+                    chart_images[r.insight_type] = b64
 
         # Render HTML
         print("Rendering HTML...")
@@ -114,6 +144,8 @@ class WeeklyReportGenerator:
             key_metrics=key_metrics,
             week_start=week_start,
             week_ending=week_ending,
+            chart_images=chart_images,
+            staleness_warning=staleness_warning,
         )
 
         elapsed = time.time() - start_time
@@ -128,9 +160,31 @@ class WeeklyReportGenerator:
                 "week_end": str(week_ending),
                 "generation_time_sec": round(elapsed, 1),
                 "insight_count": len(insights),
+                "charts_rendered": len(chart_images),
                 "generated_at": datetime.now().isoformat(),
+                "staleness_warning": staleness_warning,
             },
         )
+
+    def _check_staleness(self) -> str | None:
+        """Check if the most recent data is older than 3 days."""
+        try:
+            df = self.athena.execute_query("""
+                SELECT MAX(COALESCE(
+                    TRY(CAST(date AS date)),
+                    TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
+                )) AS latest_date
+                FROM bio_gold.dashboard_30day
+            """)
+            if df.empty:
+                return "No data found in dashboard_30day."
+            latest = pd.to_datetime(df.iloc[0]["latest_date"])
+            days_old = (datetime.now() - latest).days
+            if days_old > 3:
+                return f"Data may be stale: most recent entry is {days_old} days old ({latest.strftime('%Y-%m-%d')})."
+            return None
+        except Exception:
+            return None
 
     def _get_key_metrics(self, week_start: date, week_end: date) -> list[dict]:
         """Query key summary metrics for the week."""
@@ -183,7 +237,6 @@ class WeeklyReportGenerator:
         """Use Claude to generate a cohesive weekly narrative."""
         system_prompt = (PROMPTS_DIR / "insight_narrator.txt").read_text()
 
-        # Build context from insight results
         insight_summaries = []
         for r in insights:
             summary = f"### {r.title}\n"
@@ -218,6 +271,8 @@ Write the full report narrative following the structure in your instructions."""
         key_metrics: list[dict],
         week_start: date,
         week_ending: date,
+        chart_images: dict[str, str] = None,
+        staleness_warning: str | None = None,
     ) -> str:
         """Render the Jinja2 HTML template."""
         env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
@@ -232,11 +287,12 @@ Write the full report narrative following the structure in your instructions."""
             if line.startswith("## ") or line.startswith("### "):
                 narrative_html += f"<p><strong>{line.lstrip('#').strip()}</strong></p>\n"
             elif line.startswith("- ") or line.startswith("* "):
-                narrative_html += f"<p>→ {line[2:]}</p>\n"
+                narrative_html += f"<p>&rarr; {line[2:]}</p>\n"
             else:
                 narrative_html += f"<p>{line}</p>\n"
 
-        # Build insight cards
+        # Build insight cards with chart images
+        chart_images = chart_images or {}
         insight_cards = []
         for r in insights:
             insight_cards.append({
@@ -245,6 +301,7 @@ Write the full report narrative following the structure in your instructions."""
                 "caveats": r.caveats,
                 "icon": INSIGHT_ICONS.get(r.insight_type, "📊"),
                 "color": INSIGHT_COLORS.get(r.insight_type, "#6366F1"),
+                "chart_b64": chart_images.get(r.insight_type),
             })
 
         # Statistical notes
@@ -261,5 +318,6 @@ Write the full report narrative following the structure in your instructions."""
             narrative_html=narrative_html,
             insights=insight_cards,
             stat_notes=stat_notes,
+            staleness_warning=staleness_warning,
         )
         return html

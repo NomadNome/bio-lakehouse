@@ -134,6 +134,7 @@ class SleepReadinessAnalyzer(InsightAnalyzer):
 
         theme.style_figure(
             fig,
+            n=s["n"],
             title="Sleep Score → Next-Day Readiness",
             xaxis_title="Sleep Score",
             yaxis_title="Next-Day Readiness Score",

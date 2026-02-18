@@ -24,27 +24,38 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Dark theme CSS ───────────────────────────────────────────────────────
+# ── Theme ────────────────────────────────────────────────────────────────
 _palette = CHART_CONFIG["color_palette"]
+
+# Dark mode toggle (persisted in session state)
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = True
+
+_dark = st.session_state.dark_mode
+_bg = _palette["background"] if _dark else "#FFFFFF"
+_surface = _palette["surface"] if _dark else "#F1F5F9"
+_text = _palette["text"] if _dark else "#1E293B"
+_text_muted = _palette["text_muted"] if _dark else "#64748B"
+
 st.markdown(f"""
 <style>
     .stApp {{
-        background-color: {_palette['background']};
+        background-color: {_bg};
     }}
     .block-container {{
         padding-top: 2rem;
     }}
     .metric-label {{
-        color: {_palette['text_muted']};
+        color: {_text_muted};
         font-size: 0.85rem;
     }}
     .metric-value {{
-        color: {_palette['text']};
+        color: {_text};
         font-size: 1.8rem;
         font-weight: 700;
     }}
     .sql-block {{
-        background: {_palette['surface']};
+        background: {_surface};
         border-radius: 8px;
         padding: 1rem;
         font-family: monospace;
@@ -52,7 +63,7 @@ st.markdown(f"""
         overflow-x: auto;
     }}
     div[data-testid="stChatMessage"] {{
-        background: {_palette['surface']};
+        background: {_surface};
         border-radius: 12px;
         margin-bottom: 0.5rem;
     }}
@@ -105,6 +116,8 @@ with st.sidebar:
         st.caption("Metrics unavailable")
 
     st.divider()
+    st.toggle("Dark Mode", value=st.session_state.dark_mode, key="dark_mode_toggle",
+              on_change=lambda: st.session_state.update(dark_mode=not st.session_state.dark_mode))
     st.caption("Data: Oura Ring + Peloton")
     st.caption("Powered by Claude + Athena")
 

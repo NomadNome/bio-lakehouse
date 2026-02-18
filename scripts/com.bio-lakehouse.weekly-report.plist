@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bio-lakehouse.weekly-report</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/scripts/run_weekly_report.py</string>
+    </array>
+
+    <!-- Monday at 7:00 AM EST (12:00 UTC) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>ANTHROPIC_API_KEY</key>
+        <string>YOUR_API_KEY_HERE</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/logs/weekly-report.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/logs/weekly-report-error.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse</string>
+</dict>
+</plist>

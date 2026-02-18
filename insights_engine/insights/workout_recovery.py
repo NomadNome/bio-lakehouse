@@ -126,6 +126,7 @@ class WorkoutRecoveryAnalyzer(InsightAnalyzer):
 
         theme.style_figure(
             fig,
+            n=result.statistics["total_n"],
             title="Next-Day Readiness by Workout Type",
             yaxis_title="Next-Day Readiness Score",
             showlegend=False,

@@ -45,9 +45,24 @@ def bio_layout(**overrides) -> dict:
     return layout
 
 
-def style_figure(fig: go.Figure, **layout_overrides) -> go.Figure:
-    """Apply Bio theme to an existing Plotly figure."""
+def style_figure(fig: go.Figure, n: int = None, **layout_overrides) -> go.Figure:
+    """Apply Bio theme to an existing Plotly figure.
+
+    If *n* is provided, adds a data-source attribution annotation.
+    """
     fig.update_layout(**bio_layout(**layout_overrides))
+    # Data source attribution (PRD requirement)
+    attribution = "Data: Oura Ring + Peloton"
+    if n is not None:
+        attribution += f" | n={n}"
+    fig.add_annotation(
+        text=attribution,
+        xref="paper", yref="paper",
+        x=1.0, y=-0.12,
+        showarrow=False,
+        font=dict(color=_palette["text_muted"], size=9),
+        xanchor="right",
+    )
     return fig
 
 

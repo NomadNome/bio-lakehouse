@@ -139,6 +139,7 @@ class AnomalyDetectionAnalyzer(InsightAnalyzer):
 
         theme.style_figure(
             fig,
+            n=s["total_days"],
             title=f"Anomaly Detection ({s['anomaly_count']} anomalies in {s['total_days']} days)",
             xaxis_title="Date",
             yaxis_title="Readiness Score",
