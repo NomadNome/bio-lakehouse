@@ -79,6 +79,54 @@ Resources:
         Project: !Ref ProjectPrefix
 
   # -------------------------------------------------------
+  # Glue ETL Job - FHIR Observation Builder
+  # -------------------------------------------------------
+  FHIRObservationBuilderJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub '${ProjectPrefix}-fhir-observation-builder'
+      Role: !ImportValue
+        Fn::Sub: '${ProjectPrefix}-glue-role-arn'
+      GlueVersion: '4.0'
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      Timeout: 30
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub
+          - 's3://${SilverBucket}/scripts/fhir_observation_builder.py'
+          - SilverBucket: !ImportValue
+              Fn::Sub: '${ProjectPrefix}-silver-bucket'
+        PythonVersion: '3'
+      DefaultArguments:
+        '--silver_bucket': !ImportValue
+          Fn::Sub: '${ProjectPrefix}-silver-bucket'
+        '--gold_bucket': !Ref GoldBucket
+        '--patient_reference': 'Patient/bio-lakehouse-user-1'
+        '--extra-py-files': !Sub
+          - 's3://${SilverBucket}/scripts/bio_etl_utils.py'
+          - SilverBucket: !ImportValue
+              Fn::Sub: '${ProjectPrefix}-silver-bucket'
+        '--enable-metrics': 'true'
+        '--enable-continuous-cloudwatch-log': 'true'
+        '--job-language': python
+      Tags:
+        Project: !Ref ProjectPrefix
+
+  # -------------------------------------------------------
+  # Glue Trigger - Daily FHIR Builder (2:30 AM UTC)
+  # -------------------------------------------------------
+  DailyFHIRBuilderTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: !Sub '${ProjectPrefix}-daily-fhir-builder-trigger'
+      Type: SCHEDULED
+      Schedule: 'cron(30 2 * * ? *)'
+      StartOnCreation: true
+      Actions:
+        - JobName: !Ref FHIRObservationBuilderJob
+
+  # -------------------------------------------------------
   # Glue Crawler - Gold Layer
   # -------------------------------------------------------
   GoldCrawler:
@@ -91,6 +139,7 @@ Resources:
       Targets:
         S3Targets:
           - Path: !Sub 's3://${GoldBucket}/daily_readiness_performance/'
+          - Path: !Sub 's3://${GoldBucket}/fhir_observations/'
       SchemaChangePolicy:
         UpdateBehavior: UPDATE_IN_DATABASE
         DeleteBehavior: LOG

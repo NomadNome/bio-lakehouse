@@ -4,6 +4,7 @@ Bio Lakehouse - Shared ETL Utilities for Glue Jobs
 Common functions used across Oura and Peloton normalizer jobs.
 """
 
+import uuid
 from datetime import datetime, timedelta
 
 from pyspark.sql import DataFrame, Window
@@ -55,6 +56,49 @@ OURA_SLEEP_SCHEMA = StructType(
         StructField("contributors_restfulness", IntegerType(), True),
         StructField("contributors_timing", IntegerType(), True),
         StructField("contributors_total_sleep", IntegerType(), True),
+    ]
+)
+
+HEALTHKIT_DAILY_VITALS_SCHEMA = StructType(
+    [
+        StructField("date", StringType(), True),
+        StructField("resting_heart_rate_bpm", DoubleType(), True),
+        StructField("hrv_ms", DoubleType(), True),
+        StructField("vo2_max", DoubleType(), True),
+        StructField("blood_oxygen_pct", DoubleType(), True),
+        StructField("respiratory_rate", DoubleType(), True),
+    ]
+)
+
+HEALTHKIT_WORKOUTS_SCHEMA = StructType(
+    [
+        StructField("date", StringType(), True),
+        StructField("start_time", StringType(), True),
+        StructField("end_time", StringType(), True),
+        StructField("workout_type", StringType(), True),
+        StructField("duration_minutes", DoubleType(), True),
+        StructField("calories_burned", IntegerType(), True),
+        StructField("avg_heart_rate", IntegerType(), True),
+        StructField("distance_mi", DoubleType(), True),
+        StructField("source_app", StringType(), True),
+    ]
+)
+
+HEALTHKIT_BODY_SCHEMA = StructType(
+    [
+        StructField("date", StringType(), True),
+        StructField("weight_lbs", DoubleType(), True),
+        StructField("body_fat_pct", DoubleType(), True),
+        StructField("bmi", DoubleType(), True),
+        StructField("lean_body_mass_lbs", DoubleType(), True),
+    ]
+)
+
+HEALTHKIT_MINDFULNESS_SCHEMA = StructType(
+    [
+        StructField("date", StringType(), True),
+        StructField("duration_minutes", DoubleType(), True),
+        StructField("session_count", IntegerType(), True),
     ]
 )
 
@@ -192,6 +236,27 @@ WORKOUT_CATEGORY_MAP = {
     "outdoor": "cardio_high",
 }
 
+HEALTHKIT_WORKOUT_CATEGORY_MAP = {
+    "hiking": "cardio_high",
+    "running": "cardio_high",
+    "swimming": "cardio_high",
+    "cycling": "cardio_high",
+    "elliptical": "cardio_high",
+    "stair_climbing": "cardio_high",
+    "high_intensity_interval_training": "cardio_high",
+    "cross_training": "cardio_high",
+    "functional_strength_training": "strength_training",
+    "traditional_strength_training": "strength_training",
+    "core_training": "strength_training",
+    "yoga": "recovery",
+    "flexibility": "recovery",
+    "mind_and_body": "recovery",
+    "pilates": "recovery",
+    "tai_chi": "recovery",
+    "walking": "cardio_low",
+    "cool_down": "cardio_low",
+}
+
 
 def categorize_workout_type(df: DataFrame, discipline_col: str = "fitness_discipline") -> DataFrame:
     """Add a normalized workout_category column based on fitness discipline.
@@ -243,3 +308,100 @@ def calculate_hr_zones(df: DataFrame, max_hr: int = 200) -> DataFrame:
         .when(F.col("avg_heartrate") < max_hr * 0.9, 4)
         .otherwise(5),
     )
+
+
+# -------------------------------------------------------
+# FHIR R4 Constants
+# -------------------------------------------------------
+
+FHIR_LOINC_CODES = {
+    "heart_rate": "8867-4",
+    "steps": "55423-8",
+}
+
+FHIR_LOINC_DISPLAY = {
+    "heart_rate": "Heart rate",
+    "steps": "Number of steps in 24 hour Measured",
+}
+
+FHIR_UCUM_UNITS = {
+    "heart_rate": "/min",
+    "steps": "/d",
+}
+
+FHIR_CATEGORY_CODES = {
+    "vital-signs": {
+        "coding": [
+            {
+                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                "code": "vital-signs",
+                "display": "Vital Signs",
+            }
+        ]
+    },
+    "activity": {
+        "coding": [
+            {
+                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                "code": "activity",
+                "display": "Activity",
+            }
+        ]
+    },
+}
+
+FHIR_METRIC_CATEGORY = {
+    "heart_rate": "vital-signs",
+    "steps": "activity",
+}
+
+# UUID v5 namespace for Bio Lakehouse FHIR resources
+FHIR_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+
+
+def create_deterministic_fhir_id(source, metric_type, date):
+    """Generate a deterministic UUID v5 for a FHIR Observation.
+
+    Uses a composite key of source:metric_type:date to ensure idempotent
+    reruns produce the same resource IDs.
+
+    Args:
+        source: Data source name (e.g., "healthkit", "oura")
+        metric_type: Metric type (e.g., "heart_rate", "steps")
+        date: Date string (e.g., "2025-01-15")
+
+    Returns:
+        UUID v5 string
+    """
+    composite_key = f"{source}:{metric_type}:{date}"
+    return str(uuid.uuid5(FHIR_NAMESPACE, composite_key))
+
+
+FHIR_REQUIRED_FIELDS = [
+    "resourceType",
+    "id",
+    "status",
+    "category",
+    "code",
+    "subject",
+    "effectiveDateTime",
+    "valueQuantity",
+]
+
+
+def validate_fhir_observation(obs_dict):
+    """Validate that a FHIR Observation dict has all required fields.
+
+    Args:
+        obs_dict: Dictionary representing a FHIR R4 Observation
+
+    Returns:
+        True if valid
+
+    Raises:
+        ValueError: If required fields are missing
+    """
+    missing = [f for f in FHIR_REQUIRED_FIELDS if f not in obs_dict or obs_dict[f] is None]
+    if missing:
+        raise ValueError(f"FHIR Observation missing required fields: {missing}")
+    return True
