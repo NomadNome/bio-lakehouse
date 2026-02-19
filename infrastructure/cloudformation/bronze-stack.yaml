@@ -155,6 +155,7 @@ Resources:
           ENVIRONMENT: !Ref Environment
           OURA_GLUE_JOB: !Sub '${ProjectPrefix}-oura-normalizer'
           PELOTON_GLUE_JOB: !Sub '${ProjectPrefix}-peloton-normalizer'
+          HEALTHKIT_GLUE_JOB: !Sub '${ProjectPrefix}-healthkit-normalizer'
       Code:
         ZipFile: |
           # Inline stub - deploy full handler via aws lambda update-function-code

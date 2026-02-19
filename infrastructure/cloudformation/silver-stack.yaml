@@ -145,6 +145,30 @@ Resources:
       Tags:
         Project: !Ref ProjectPrefix
 
+  HealthKitNormalizerJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub '${ProjectPrefix}-healthkit-normalizer'
+      Role: !GetAtt GlueJobRole.Arn
+      GlueVersion: '4.0'
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      Timeout: 30
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub 's3://${SilverBucket}/scripts/healthkit_normalizer.py'
+        PythonVersion: '3'
+      DefaultArguments:
+        '--bronze_bucket': !ImportValue
+          Fn::Sub: '${ProjectPrefix}-bronze-bucket'
+        '--silver_bucket': !Ref SilverBucket
+        '--extra-py-files': !Sub 's3://${SilverBucket}/scripts/bio_etl_utils.py'
+        '--enable-metrics': 'true'
+        '--enable-continuous-cloudwatch-log': 'true'
+        '--job-language': python
+      Tags:
+        Project: !Ref ProjectPrefix
+
   # -------------------------------------------------------
   # Glue Crawler - Auto-discover Silver schema
   # -------------------------------------------------------
@@ -160,6 +184,10 @@ Resources:
           - Path: !Sub 's3://${SilverBucket}/oura_daily_sleep/'
           - Path: !Sub 's3://${SilverBucket}/oura_daily_activity/'
           - Path: !Sub 's3://${SilverBucket}/peloton_workouts/'
+          - Path: !Sub 's3://${SilverBucket}/healthkit_daily_vitals/'
+          - Path: !Sub 's3://${SilverBucket}/healthkit_workouts/'
+          - Path: !Sub 's3://${SilverBucket}/healthkit_body/'
+          - Path: !Sub 's3://${SilverBucket}/healthkit_mindfulness/'
       SchemaChangePolicy:
         UpdateBehavior: UPDATE_IN_DATABASE
         DeleteBehavior: LOG

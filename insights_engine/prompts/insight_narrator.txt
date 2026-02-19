@@ -21,6 +21,14 @@ Write a cohesive weekly narrative that weaves together the following insight res
 8. **Recommendations** — 2-3 specific, actionable suggestions for next week based on the data
 9. **Statistical Notes** — Brief caveat about sample sizes and confidence
 
+## Critical: Readiness Timing
+- The Oura readiness score is measured **when the user wakes up**, BEFORE any workout that day
+- A readiness score on a given date reflects the PREVIOUS night's sleep and recovery, NOT any workout done that same day
+- A workout on day X affects the readiness score on day X+1 (next morning), not day X
+- NEVER say "after your cycling session your readiness was X" — the readiness was measured BEFORE the session
+- CORRECT framing: "You woke up with a readiness of 72 on Feb 14th, then did a cycling session. The following morning your readiness was 81."
+- When discussing workout impact, always reference the NEXT-DAY readiness, not same-day
+
 ## Rules
 - Reference specific dates and numbers from the data
 - If a correlation is not statistically significant, say so clearly

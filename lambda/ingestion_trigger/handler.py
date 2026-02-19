@@ -22,6 +22,7 @@ INGESTION_LOG_TABLE = os.environ.get("INGESTION_LOG_TABLE", "bio_ingestion_log")
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
 OURA_GLUE_JOB = os.environ.get("OURA_GLUE_JOB", "bio-lakehouse-oura-normalizer")
 PELOTON_GLUE_JOB = os.environ.get("PELOTON_GLUE_JOB", "bio-lakehouse-peloton-normalizer")
+HEALTHKIT_GLUE_JOB = os.environ.get("HEALTHKIT_GLUE_JOB", "bio-lakehouse-healthkit-normalizer")
 
 # Expected headers for validation
 EXPECTED_HEADERS = {
@@ -35,6 +36,10 @@ EXPECTED_HEADERS = {
         "total_output",
         "calories_burned",
     ],
+    "healthkit/daily_vitals": ["date", "resting_heart_rate_bpm"],
+    "healthkit/workouts": ["date", "workout_type", "duration_minutes"],
+    "healthkit/body": ["date", "weight_lbs"],
+    "healthkit/mindfulness": ["date", "duration_minutes"],
 }
 
 
@@ -96,6 +101,8 @@ def trigger_glue_job(source, bucket, key):
         job_name = OURA_GLUE_JOB
     elif source.startswith("peloton/"):
         job_name = PELOTON_GLUE_JOB
+    elif source.startswith("healthkit/"):
+        job_name = HEALTHKIT_GLUE_JOB
 
     if not job_name:
         return None

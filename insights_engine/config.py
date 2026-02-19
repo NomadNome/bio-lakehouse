@@ -15,10 +15,10 @@ AWS_CONFIG = {
     "athena_database": os.environ.get("BIO_ATHENA_DATABASE", "bio_gold"),
     "athena_results_bucket": os.environ.get(
         "BIO_ATHENA_RESULTS_BUCKET",
-        "bio-lakehouse-athena-results-ACCOUNT_ID",
+        "bio-lakehouse-athena-results-000000000000",
     ),
     "gold_bucket": os.environ.get(
-        "BIO_S3_GOLD_BUCKET", "bio-lakehouse-gold-ACCOUNT_ID"
+        "BIO_S3_GOLD_BUCKET", "bio-lakehouse-gold-000000000000"
     ),
     "aws_region": os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
 }
@@ -67,6 +67,14 @@ RATIO_ZONES = {
     "high_performance": {"min": 2.5, "max": 4.0, "label": "High Performance"},
     "moderate": {"min": 1.5, "max": 2.5, "label": "Moderate"},
     "undertrained": {"max": 1.5, "label": "Undertrained / Recovery Day"},
+}
+
+# Default intensity-to-output mapping (overridden at runtime with actual percentiles)
+INTENSITY_OUTPUT_DEFAULTS = {
+    "none": 0,
+    "low": 150,
+    "moderate": 300,
+    "high": 500,
 }
 
 # Athena views available in bio_gold
