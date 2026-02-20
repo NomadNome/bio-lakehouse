@@ -39,6 +39,9 @@ BODY_TYPES = {
     "HKQuantityTypeIdentifierBodyFatPercentage": "body_fat_pct",
     "HKQuantityTypeIdentifierBodyMassIndex": "bmi",
     "HKQuantityTypeIdentifierLeanBodyMass": "lean_body_mass",
+    "HKQuantityTypeIdentifierBasalEnergyBurned": "bmr",  # Basal Metabolic Rate
+    # Additional body composition metrics (if Hume pod writes these)
+    "HKQuantityTypeIdentifierAppleStandingHeight": "height",
 }
 
 # Aggregation: "last" picks the last value of the day, "mean" averages all values
@@ -60,7 +63,7 @@ WORKOUTS_HEADERS = [
     "calories_burned", "avg_heart_rate", "distance_mi", "source_app",
 ]
 
-BODY_HEADERS = ["date", "weight_lbs", "body_fat_pct", "bmi", "lean_body_mass_lbs", "device_name"]
+BODY_HEADERS = ["date", "weight_lbs", "body_fat_pct", "bmi", "lean_body_mass_lbs", "bmr", "height_in", "device_name"]
 
 MINDFULNESS_HEADERS = ["date", "duration_minutes", "session_count"]
 
@@ -223,6 +226,29 @@ class HealthKitAccumulator:
                 row["lean_body_mass_lbs"] = round(val * KG_TO_LBS, 1) if unit == "kg" else round(val, 1)
             else:
                 row["lean_body_mass_lbs"] = ""
+
+            # BMR (Basal Metabolic Rate)
+            if "bmr" in data:
+                val, unit = data["bmr"]
+                # BMR is typically in kcal/day
+                row["bmr"] = round(val, 0)
+            else:
+                row["bmr"] = ""
+
+            # Height
+            if "height" in data:
+                val, unit = data["height"]
+                # Convert cm to inches (divide by 2.54) or m to inches (multiply by 39.3701)
+                if unit == "cm":
+                    row["height_in"] = round(val / 2.54, 1)
+                elif unit == "m":
+                    row["height_in"] = round(val * 39.3701, 1)
+                elif unit == "in":
+                    row["height_in"] = round(val, 1)
+                else:
+                    row["height_in"] = round(val / 2.54, 1)  # assume cm
+            else:
+                row["height_in"] = ""
 
             # Device name (last-of-day wins, same as other body fields)
             row["device_name"] = data.get("_device_name", "")

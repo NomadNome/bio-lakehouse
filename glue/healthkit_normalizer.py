@@ -170,12 +170,21 @@ def process_body():
     validate_schema(df, ["date", "weight_lbs"], "healthkit_body")
 
     # Cast numeric columns
-    for col_name in ["weight_lbs", "body_fat_pct", "bmi", "lean_body_mass_lbs"]:
+    for col_name in ["weight_lbs", "body_fat_pct", "bmi", "lean_body_mass_lbs", "bmr", "height_in"]:
         if col_name in df.columns:
             df = df.withColumn(col_name, F.col(col_name).cast("double"))
 
     # Forward-fill weight (sporadic measurements)
-    df = forward_fill(df, partition_col=None, order_col="date", fill_cols=["weight_lbs"])
+    fill_cols = ["weight_lbs"]
+    # Also forward-fill body composition metrics for days when only weight is recorded
+    if "body_fat_pct" in df.columns:
+        fill_cols.append("body_fat_pct")
+    if "lean_body_mass_lbs" in df.columns:
+        fill_cols.append("lean_body_mass_lbs")
+    if "height_in" in df.columns:
+        fill_cols.append("height_in")  # Height rarely changes
+    
+    df = forward_fill(df, partition_col=None, order_col="date", fill_cols=fill_cols)
 
     # Partitioning columns
     df = (

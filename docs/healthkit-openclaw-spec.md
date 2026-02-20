@@ -75,6 +75,9 @@ One row per day with body measurements. Sparse data — not every day will have 
 | `body_fat_pct` | Double | No | As percentage (18.0, not 0.18). Convert if decimal. |
 | `bmi` | Double | No | Body mass index |
 | `lean_body_mass_lbs` | Double | No | Convert kg to lbs if needed |
+| `bmr` | Integer | No | Basal Metabolic Rate in kcal/day (if device provides) |
+| `height_in` | Double | No | Height in inches. Convert from cm (÷2.54) or m (×39.3701) if needed |
+| `device_name` | String | No | Source device name (e.g., "Hume Health", "Apple Watch") |
 
 ### 4. `healthkit/mindfulness/`
 
