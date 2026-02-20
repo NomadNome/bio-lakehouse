@@ -160,7 +160,9 @@ class HealthKitAccumulator:
         if not field:
             return
         self.body[date][field] = (value, unit)
-        if source_name:
+        # Only store device_name for body composition measurements, not BMR
+        # BMR comes from Apple Watch continuously and shouldn't overwrite body comp source
+        if source_name and field != "bmr":
             self.body[date]["_device_name"] = source_name
 
     def add_mindfulness(self, date, duration_minutes):
