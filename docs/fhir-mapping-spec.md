@@ -110,12 +110,54 @@ Each daily data point produces one FHIR Observation resource.
 }
 ```
 
+### Additional Input Schemas (Phase 5)
+
+#### HRV (HealthKit Daily Vitals)
+
+| Column | Type | Example |
+|--------|------|---------|
+| `date` | String | `"2025-01-15"` |
+| `hrv_ms` | Double | `45.0` |
+
+**Source path:** `s3://{SILVER}/healthkit_daily_vitals/`
+
+#### VO2 Max (HealthKit Daily Vitals)
+
+| Column | Type | Example |
+|--------|------|---------|
+| `date` | String | `"2025-01-15"` |
+| `vo2_max` | Double | `42.3` |
+
+**Source path:** `s3://{SILVER}/healthkit_daily_vitals/`
+
+#### Blood Oxygen (HealthKit Daily Vitals)
+
+| Column | Type | Example |
+|--------|------|---------|
+| `date` | String | `"2025-01-15"` |
+| `blood_oxygen_pct` | Double | `98.0` |
+
+**Source path:** `s3://{SILVER}/healthkit_daily_vitals/`
+
+#### Body Weight (HealthKit Body)
+
+| Column | Type | Example |
+|--------|------|---------|
+| `date` | String | `"2025-01-15"` |
+| `weight_lbs` | Double | `175.0` |
+
+**Source path:** `s3://{SILVER}/healthkit_body/`
+
 ## LOINC / UCUM Reference
 
 | Metric | LOINC Code | LOINC Display | UCUM Unit | UCUM Code |
 |--------|-----------|---------------|-----------|-----------|
 | Heart Rate | `8867-4` | Heart rate | beats per minute | `/min` |
 | Steps | `55423-8` | Number of steps in 24 hour Measured | steps per day | `/d` |
+| HRV | `80404-7` | R-R interval.standard deviation | milliseconds | `ms` |
+| VO2 Max | `60842-2` | Oxygen consumption (VO2 max) | mL/kg/min | `mL/kg/min` |
+| Body Weight | `29463-7` | Body weight | pounds | `[lb_av]` |
+| Blood Oxygen | `2708-6` | Oxygen saturation (SpO2) | percent | `%` |
 
 ## ID Generation Strategy
 
@@ -142,3 +184,37 @@ This ensures idempotent reruns overwrite with identical IDs rather than creating
 ## Patient Reference
 
 The `subject.reference` field is configurable via the `--patient_reference` Glue job argument. Default: `Patient/bio-lakehouse-user-1`.
+
+## FHIR R4 Bundle Export
+
+The Streamlit "Export" page builds an on-demand FHIR R4 Bundle (type: `collection`) for a user-selected date range. This enables sharing health data with healthcare providers.
+
+### Bundle Structure
+
+```json
+{
+  "resourceType": "Bundle",
+  "id": "<uuid4>",
+  "type": "collection",
+  "timestamp": "2025-01-15T12:00:00Z",
+  "total": 43,
+  "entry": [
+    { "fullUrl": "urn:uuid:...", "resource": { "resourceType": "Patient", ... } },
+    { "fullUrl": "urn:uuid:...", "resource": { "resourceType": "Observation", ... } }
+  ]
+}
+```
+
+### Included Resources
+
+- **Patient** — minimal resource with ID `bio-lakehouse-user-1`
+- **Observation** — one per metric per day for: Heart Rate, Steps, HRV, VO2 Max, Body Weight, Blood Oxygen
+
+### Data Source
+
+Queries `bio_gold.daily_readiness_performance` for the selected date range. Null/zero values are excluded.
+
+### Output
+
+- MIME type: `application/fhir+json`
+- Downloaded as: `bio-lakehouse-fhir-bundle-{start}-to-{end}.json`

@@ -88,4 +88,5 @@ GOLD_VIEWS = [
     "readiness_performance_correlation",
     "weekly_trends",
     "overtraining_risk",
+    "training_load_daily",
 ]

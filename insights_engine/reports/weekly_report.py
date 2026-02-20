@@ -194,8 +194,12 @@ class WeeklyReportGenerator:
             ROUND(AVG(sleep_score), 1) AS avg_sleep,
             SUM(CASE WHEN had_workout = true THEN 1 ELSE 0 END) AS workout_days,
             ROUND(SUM(total_output_kj), 0) AS total_output,
-            COUNT(*) AS data_days
-        FROM bio_gold.dashboard_30day
+            COUNT(*) AS data_days,
+            ROUND(AVG(resting_heart_rate_bpm), 0) AS avg_rhr,
+            ROUND(AVG(hrv_ms), 0) AS avg_hrv,
+            ROUND(AVG(vo2_max), 1) AS avg_vo2,
+            ROUND(AVG(weight_lbs), 1) AS avg_weight
+        FROM bio_gold.daily_readiness_performance
         WHERE COALESCE(
                 TRY(CAST(date AS date)),
                 TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
@@ -220,13 +224,30 @@ class WeeklyReportGenerator:
                     return "trend-down"
                 return "trend-stable"
 
-            return [
+            metrics = [
                 {"value": f"{avg_r:.0f}" if pd.notna(avg_r) else "—", "label": "Avg Readiness", "trend_class": trend_class(avg_r)},
                 {"value": f"{avg_s:.0f}" if pd.notna(avg_s) else "—", "label": "Avg Sleep Score", "trend_class": trend_class(avg_s, 85, 70)},
                 {"value": f"{int(row.get('workout_days', 0))}", "label": "Workout Days", "trend_class": ""},
                 {"value": f"{int(row.get('total_output', 0)):,}", "label": "Total Output (kJ)", "trend_class": ""},
                 {"value": f"{int(row.get('data_days', 0))}/7", "label": "Data Days", "trend_class": ""},
             ]
+
+            # HealthKit vitals metrics (if available)
+            avg_rhr = row.get("avg_rhr")
+            avg_hrv = row.get("avg_hrv")
+            avg_vo2 = row.get("avg_vo2")
+            avg_weight = row.get("avg_weight")
+
+            if pd.notna(avg_rhr):
+                metrics.append({"value": f"{float(avg_rhr):.0f} bpm", "label": "Resting HR", "trend_class": trend_class(float(avg_rhr), 55, 65)})
+            if pd.notna(avg_hrv):
+                metrics.append({"value": f"{float(avg_hrv):.0f} ms", "label": "HRV", "trend_class": trend_class(float(avg_hrv), 50, 25)})
+            if pd.notna(avg_vo2) and float(avg_vo2) > 0:
+                metrics.append({"value": f"{float(avg_vo2):.1f}", "label": "VO2 Max", "trend_class": ""})
+            if pd.notna(avg_weight):
+                metrics.append({"value": f"{float(avg_weight):.1f} lbs", "label": "Avg Weight", "trend_class": ""})
+
+            return metrics
         except Exception as e:
             print(f"  WARNING: Could not get key metrics: {e}")
             return []
@@ -308,7 +329,7 @@ Write the full report narrative following the structure in your instructions."""
         all_caveats = []
         for r in insights:
             all_caveats.extend(r.caveats)
-        stat_notes = " ".join(all_caveats) if all_caveats else "All analyses based on available Oura + Peloton data."
+        stat_notes = " ".join(all_caveats) if all_caveats else "All analyses based on available Oura Ring, Peloton, and Apple Health data."
 
         html = template.render(
             week_start=str(week_start),

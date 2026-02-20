@@ -39,10 +39,18 @@ class TestFHIRConstants(unittest.TestCase):
     def test_loinc_codes_present(self):
         self.assertEqual(FHIR_LOINC_CODES["heart_rate"], "8867-4")
         self.assertEqual(FHIR_LOINC_CODES["steps"], "55423-8")
+        self.assertEqual(FHIR_LOINC_CODES["hrv"], "80404-7")
+        self.assertEqual(FHIR_LOINC_CODES["vo2_max"], "60842-2")
+        self.assertEqual(FHIR_LOINC_CODES["body_weight"], "29463-7")
+        self.assertEqual(FHIR_LOINC_CODES["blood_oxygen"], "2708-6")
 
     def test_ucum_units_present(self):
         self.assertEqual(FHIR_UCUM_UNITS["heart_rate"], "/min")
         self.assertEqual(FHIR_UCUM_UNITS["steps"], "/d")
+        self.assertEqual(FHIR_UCUM_UNITS["hrv"], "ms")
+        self.assertEqual(FHIR_UCUM_UNITS["vo2_max"], "mL/kg/min")
+        self.assertEqual(FHIR_UCUM_UNITS["body_weight"], "[lb_av]")
+        self.assertEqual(FHIR_UCUM_UNITS["blood_oxygen"], "%")
 
     def test_loinc_display_names(self):
         self.assertIn("heart_rate", FHIR_LOINC_DISPLAY)

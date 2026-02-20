@@ -1,0 +1,151 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Bio-Optimization Data Lakehouse - Health Alerts
+  SNS topic, Lambda function, and EventBridge daily schedule for health alerts.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+  ProjectPrefix:
+    Type: String
+    Default: bio-lakehouse
+  AlertEmail:
+    Type: String
+    Description: Email address to receive health alert notifications
+    AllowedPattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    ConstraintDescription: Must be a valid email address
+
+Resources:
+  # -------------------------------------------------------
+  # SNS Topic - Health Alerts
+  # -------------------------------------------------------
+  HealthAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectPrefix}-health-alerts'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectPrefix
+
+  HealthAlertsEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref HealthAlertsTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # -------------------------------------------------------
+  # IAM Role - Health Alerts Lambda
+  # -------------------------------------------------------
+  HealthAlertsLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectPrefix}-health-alerts-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: !Sub '${ProjectPrefix}-health-alerts-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Athena query execution
+              - Effect: Allow
+                Action:
+                  - 'athena:StartQueryExecution'
+                  - 'athena:GetQueryExecution'
+                  - 'athena:GetQueryResults'
+                Resource: '*'
+              # S3 access for Athena results and Gold bucket
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:ListBucket'
+                  - 's3:GetBucketLocation'
+                Resource:
+                  - !Sub 'arn:aws:s3:::${ProjectPrefix}-athena-results-${AWS::AccountId}'
+                  - !Sub 'arn:aws:s3:::${ProjectPrefix}-athena-results-${AWS::AccountId}/*'
+                  - !Sub 'arn:aws:s3:::${ProjectPrefix}-gold-${AWS::AccountId}'
+                  - !Sub 'arn:aws:s3:::${ProjectPrefix}-gold-${AWS::AccountId}/*'
+              # Glue catalog (for Athena table lookups)
+              - Effect: Allow
+                Action:
+                  - 'glue:GetDatabase'
+                  - 'glue:GetTable'
+                  - 'glue:GetTables'
+                  - 'glue:GetPartitions'
+                Resource: '*'
+              # SNS publish
+              - Effect: Allow
+                Action:
+                  - 'sns:Publish'
+                Resource: !Ref HealthAlertsTopic
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectPrefix
+
+  # -------------------------------------------------------
+  # Lambda Function - Health Alerts
+  # -------------------------------------------------------
+  HealthAlertsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectPrefix}-health-alerts'
+      Runtime: python3.11
+      Handler: handler.lambda_handler
+      Role: !GetAtt HealthAlertsLambdaRole.Arn
+      Timeout: 120
+      MemorySize: 256
+      Code:
+        S3Bucket: !Sub '${ProjectPrefix}-gold-${AWS::AccountId}'
+        S3Key: lambda/health_alerts.zip
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref HealthAlertsTopic
+          ATHENA_DATABASE: bio_gold
+          ATHENA_RESULTS_BUCKET: !Sub '${ProjectPrefix}-athena-results-${AWS::AccountId}'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectPrefix
+
+  # -------------------------------------------------------
+  # EventBridge Rule - Daily 3:00 AM UTC
+  # -------------------------------------------------------
+  DailyHealthAlertsRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectPrefix}-daily-health-alerts'
+      Description: Triggers health alerts Lambda daily at 3:00 AM UTC
+      ScheduleExpression: 'cron(0 3 * * ? *)'
+      State: ENABLED
+      Targets:
+        - Id: HealthAlertsLambdaTarget
+          Arn: !GetAtt HealthAlertsFunction.Arn
+
+  HealthAlertsLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref HealthAlertsFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailyHealthAlertsRule.Arn
+
+Outputs:
+  HealthAlertsTopicArn:
+    Description: SNS topic ARN for health alerts
+    Value: !Ref HealthAlertsTopic
+    Export:
+      Name: !Sub '${ProjectPrefix}-health-alerts-topic'
+
+  HealthAlertsLambdaArn:
+    Description: Health alerts Lambda function ARN
+    Value: !GetAtt HealthAlertsFunction.Arn

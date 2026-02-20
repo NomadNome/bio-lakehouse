@@ -80,7 +80,7 @@ SELECT
     date,
     readiness_score,
     sleep_score,
-    CAST(contributors_hrv_balance AS integer) AS hrv_balance,
+    CAST(hrv_balance_score AS integer) AS hrv_balance,
     activity_score,
     combined_wellness_score,
     had_workout,
@@ -91,7 +91,7 @@ SELECT
     -- Energy state classification
     CASE
         WHEN readiness_score >= 85 AND sleep_score >= 88
-             AND CAST(contributors_hrv_balance AS integer) >= 75
+             AND CAST(hrv_balance_score AS integer) >= 75
             THEN 'peak'
         WHEN readiness_score >= 85 AND sleep_score >= 80
             THEN 'high'
@@ -104,7 +104,7 @@ SELECT
     -- Human-readable guidance
     CASE
         WHEN readiness_score >= 85 AND sleep_score >= 88
-             AND CAST(contributors_hrv_balance AS integer) >= 75
+             AND CAST(hrv_balance_score AS integer) >= 75
             THEN '125% Energy — Peak state. Go all out: HIIT, Tabata, hard cycling, or high-stakes interview prep.'
         WHEN readiness_score >= 85 AND sleep_score >= 80
             THEN 'High energy. Great for hard cycling, bootcamp, or deep technical study sessions.'
@@ -237,7 +237,7 @@ SELECT
     COUNT(*) AS sample_size,
     ROUND(CORR(readiness_score, total_output_kj), 3) AS readiness_output_corr,
     ROUND(CORR(sleep_score, total_output_kj), 3) AS sleep_output_corr,
-    ROUND(CORR(CAST(contributors_hrv_balance AS double), total_output_kj), 3) AS hrv_output_corr,
+    ROUND(CORR(CAST(hrv_balance_score AS double), total_output_kj), 3) AS hrv_output_corr,
     ROUND(CORR(sleep_score, readiness_score), 3) AS sleep_readiness_corr,
     ROUND(AVG(readiness_score), 1) AS avg_readiness,
     ROUND(AVG(sleep_score), 1) AS avg_sleep,
@@ -255,7 +255,7 @@ SELECT
     COUNT(*) AS sample_size,
     ROUND(CORR(readiness_score, total_output_kj), 3) AS readiness_output_corr,
     ROUND(CORR(sleep_score, total_output_kj), 3) AS sleep_output_corr,
-    ROUND(CORR(CAST(contributors_hrv_balance AS double), total_output_kj), 3) AS hrv_output_corr,
+    ROUND(CORR(CAST(hrv_balance_score AS double), total_output_kj), 3) AS hrv_output_corr,
     ROUND(CORR(sleep_score, readiness_score), 3) AS sleep_readiness_corr,
     ROUND(AVG(readiness_score), 1) AS avg_readiness,
     ROUND(AVG(sleep_score), 1) AS avg_sleep,
@@ -273,7 +273,7 @@ SELECT
     COUNT(*) AS sample_size,
     ROUND(CORR(readiness_score, total_output_kj), 3) AS readiness_output_corr,
     ROUND(CORR(sleep_score, total_output_kj), 3) AS sleep_output_corr,
-    ROUND(CORR(CAST(contributors_hrv_balance AS double), total_output_kj), 3) AS hrv_output_corr,
+    ROUND(CORR(CAST(hrv_balance_score AS double), total_output_kj), 3) AS hrv_output_corr,
     ROUND(CORR(sleep_score, readiness_score), 3) AS sleep_readiness_corr,
     ROUND(AVG(readiness_score), 1) AS avg_readiness,
     ROUND(AVG(sleep_score), 1) AS avg_sleep,
@@ -359,7 +359,7 @@ SELECT
     date,
     readiness_score,
     sleep_score,
-    CAST(contributors_hrv_balance AS integer) AS hrv_balance,
+    CAST(hrv_balance_score AS integer) AS hrv_balance,
     combined_wellness_score,
     total_output_kj,
     workout_count,
@@ -399,3 +399,41 @@ SELECT
     END AS risk_guidance
 FROM bio_gold.daily_readiness_performance
 WHERE readiness_score IS NOT NULL;
+
+
+-- ============================================================
+-- View: Training Load Daily (TSS / CTL / ATL)
+-- Computes Training Stress Score per day using Peloton output
+-- or HealthKit calorie fallback. Used for periodization charts.
+-- ============================================================
+CREATE OR REPLACE VIEW bio_gold.training_load_daily AS
+SELECT
+    date,
+    had_workout,
+    total_output_kj,
+    total_workout_minutes,
+    max_avg_hr,
+    peloton_calories,
+    active_calories,
+    -- Training Stress Score (TSS)
+    CASE
+        WHEN had_workout = false OR total_workout_minutes IS NULL OR total_workout_minutes = 0
+            THEN 0.0
+        WHEN total_output_kj IS NOT NULL AND total_output_kj > 0
+            -- Peloton-based TSS: (output_kj / 100) * (minutes / 60) * HR_factor, clamped 0-300
+            THEN LEAST(300.0, GREATEST(0.0,
+                (total_output_kj / 100.0)
+                * (total_workout_minutes / 60.0)
+                * LEAST(COALESCE(max_avg_hr, 140) / 180.0, 1.5)
+            ))
+        WHEN COALESCE(peloton_calories, 0) + COALESCE(active_calories, 0) > 0
+            -- HealthKit calorie fallback: (calories / 500) * (minutes / 30) * 0.85
+            THEN LEAST(300.0, GREATEST(0.0,
+                ((COALESCE(peloton_calories, 0) + COALESCE(active_calories, 0)) / 500.0)
+                * (total_workout_minutes / 30.0)
+                * 0.85
+            ))
+        ELSE 0.0
+    END AS tss
+FROM bio_gold.daily_readiness_performance
+ORDER BY date;

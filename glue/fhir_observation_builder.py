@@ -138,6 +138,34 @@ build_steps_observation_udf = F.udf(
     StringType(),
 )
 
+build_hrv_observation_udf = F.udf(
+    lambda date_str, value: build_fhir_observation(
+        "healthkit", "hrv", date_str, value, PATIENT_REFERENCE
+    ),
+    StringType(),
+)
+
+build_vo2_observation_udf = F.udf(
+    lambda date_str, value: build_fhir_observation(
+        "healthkit", "vo2_max", date_str, value, PATIENT_REFERENCE
+    ),
+    StringType(),
+)
+
+build_weight_observation_udf = F.udf(
+    lambda date_str, value: build_fhir_observation(
+        "healthkit", "body_weight", date_str, value, PATIENT_REFERENCE
+    ),
+    StringType(),
+)
+
+build_spo2_observation_udf = F.udf(
+    lambda date_str, value: build_fhir_observation(
+        "healthkit", "blood_oxygen", date_str, value, PATIENT_REFERENCE
+    ),
+    StringType(),
+)
+
 
 # -------------------------------------------------------
 # Read Silver data
@@ -145,6 +173,7 @@ build_steps_observation_udf = F.udf(
 
 hr_df = read_silver_safe(f"s3://{SILVER_BUCKET}/healthkit_daily_vitals/")
 steps_df = read_silver_safe(f"s3://{SILVER_BUCKET}/oura_daily_activity/")
+body_df = read_silver_safe(f"s3://{SILVER_BUCKET}/healthkit_body/")
 
 observations = []
 
@@ -177,6 +206,62 @@ if steps_df is not None:
     print(f"Steps observations: {steps_obs.count()}")
 else:
     print("No Oura daily activity data available")
+
+# HRV observations (from healthkit_daily_vitals)
+if hr_df is not None and "hrv_ms" in hr_df.columns:
+    hrv_obs = (
+        hr_df.filter(F.col("hrv_ms").isNotNull())
+        .withColumn(
+            "value",
+            build_hrv_observation_udf(F.col("date"), F.col("hrv_ms")),
+        )
+        .filter(F.col("value").isNotNull())
+        .select(F.col("value"), F.col("date"))
+    )
+    observations.append(hrv_obs)
+    print(f"HRV observations: {hrv_obs.count()}")
+
+# VO2 Max observations (from healthkit_daily_vitals)
+if hr_df is not None and "vo2_max" in hr_df.columns:
+    vo2_obs = (
+        hr_df.filter(F.col("vo2_max").isNotNull())
+        .withColumn(
+            "value",
+            build_vo2_observation_udf(F.col("date"), F.col("vo2_max")),
+        )
+        .filter(F.col("value").isNotNull())
+        .select(F.col("value"), F.col("date"))
+    )
+    observations.append(vo2_obs)
+    print(f"VO2 Max observations: {vo2_obs.count()}")
+
+# Blood Oxygen observations (from healthkit_daily_vitals)
+if hr_df is not None and "blood_oxygen_pct" in hr_df.columns:
+    spo2_obs = (
+        hr_df.filter(F.col("blood_oxygen_pct").isNotNull())
+        .withColumn(
+            "value",
+            build_spo2_observation_udf(F.col("date"), F.col("blood_oxygen_pct")),
+        )
+        .filter(F.col("value").isNotNull())
+        .select(F.col("value"), F.col("date"))
+    )
+    observations.append(spo2_obs)
+    print(f"Blood oxygen observations: {spo2_obs.count()}")
+
+# Body Weight observations (from healthkit_body)
+if body_df is not None and "weight_lbs" in body_df.columns:
+    weight_obs = (
+        body_df.filter(F.col("weight_lbs").isNotNull())
+        .withColumn(
+            "value",
+            build_weight_observation_udf(F.col("date"), F.col("weight_lbs")),
+        )
+        .filter(F.col("value").isNotNull())
+        .select(F.col("value"), F.col("date"))
+    )
+    observations.append(weight_obs)
+    print(f"Body weight observations: {weight_obs.count()}")
 
 
 # -------------------------------------------------------

@@ -52,7 +52,7 @@ def style_figure(fig: go.Figure, n: int = None, **layout_overrides) -> go.Figure
     """
     fig.update_layout(**bio_layout(**layout_overrides))
     # Data source attribution (PRD requirement)
-    attribution = "Data: Oura Ring + Peloton"
+    attribution = "Data: Oura Ring + Peloton + Apple Health"
     if n is not None:
         attribution += f" | n={n}"
     fig.add_annotation(
