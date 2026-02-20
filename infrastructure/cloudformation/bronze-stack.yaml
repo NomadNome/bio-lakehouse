@@ -133,6 +133,7 @@ Resources:
                 Action:
                   - 'glue:StartJobRun'
                   - 'glue:GetJobRun'
+                  - 'glue:GetJobRuns'
                 Resource: '*'
 
   # -------------------------------------------------------

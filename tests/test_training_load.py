@@ -78,9 +78,11 @@ class TestTrainingLoadAnalyzer(unittest.TestCase):
     mocked pyspark.sql.DataFrame).
     """
 
-    def _make_mock_athena(self, df):
+    def _make_mock_athena(self, df, vitals_df=None):
         athena = MagicMock()
-        athena.execute_query.return_value = df
+        if vitals_df is None:
+            vitals_df = pd.DataFrame(columns=["date", "resting_heart_rate_bpm", "hrv_ms"])
+        athena.execute_query.side_effect = [df, vitals_df]
         return athena
 
     def _make_sample_df(self, n_days=60, base_tss=40):
@@ -93,6 +95,18 @@ class TestTrainingLoadAnalyzer(unittest.TestCase):
             "date": dates.strftime("%Y-%m-%d"),
             "tss": tss_values,
             "had_workout": [t > 0 for t in tss_values],
+        })
+
+    def _make_vitals_df(self, n_days=60, base_rhr=60, base_hrv=45):
+        """Create vitals DataFrame with optional RHR/HRV spikes for testing."""
+        dates = pd.date_range("2025-01-01", periods=n_days, freq="D")
+        np.random.seed(42)
+        rhr = base_rhr + np.random.randn(n_days) * 3
+        hrv = base_hrv + np.random.randn(n_days) * 5
+        return pd.DataFrame({
+            "date": dates.strftime("%Y-%m-%d"),
+            "resting_heart_rate_bpm": rhr,
+            "hrv_ms": hrv,
         })
 
     @patch.object(TrainingLoadAnalyzer, "visualize", return_value=MagicMock())
@@ -108,7 +122,8 @@ class TestTrainingLoadAnalyzer(unittest.TestCase):
 
     def test_insufficient_data(self):
         df = pd.DataFrame({"date": ["2025-01-01"], "tss": [50], "had_workout": [True]})
-        athena = self._make_mock_athena(df)
+        athena = MagicMock()
+        athena.execute_query.return_value = df
         analyzer = TrainingLoadAnalyzer(athena)
         result = analyzer.analyze()
 
@@ -169,6 +184,59 @@ class TestTrainingLoadAnalyzer(unittest.TestCase):
         self.assertEqual(result.statistics["latest_ctl"], 0.0)
         self.assertEqual(result.statistics["latest_atl"], 0.0)
         self.assertEqual(result.statistics["form"], "neutral")
+
+
+    @patch.object(TrainingLoadAnalyzer, "visualize", return_value=MagicMock())
+    def test_recovery_impaired_stats_present(self, _mock_viz):
+        df = self._make_sample_df()
+        vitals = self._make_vitals_df()
+        athena = self._make_mock_athena(df, vitals)
+        analyzer = TrainingLoadAnalyzer(athena)
+        result = analyzer.analyze()
+
+        self.assertIn("recovery_impaired_days", result.statistics)
+        self.assertIn("recovery_impaired_recent", result.statistics)
+        self.assertIsInstance(result.statistics["recovery_impaired_days"], int)
+        self.assertIsInstance(result.statistics["recovery_impaired_recent"], bool)
+
+    @patch.object(TrainingLoadAnalyzer, "visualize", return_value=MagicMock())
+    def test_recovery_impaired_with_no_vitals(self, _mock_viz):
+        """Days without vitals data should never be flagged as recovery impaired."""
+        df = self._make_sample_df()
+        athena = self._make_mock_athena(df)  # no vitals_df
+        analyzer = TrainingLoadAnalyzer(athena)
+        result = analyzer.analyze()
+
+        self.assertEqual(result.statistics["recovery_impaired_days"], 0)
+        self.assertFalse(result.statistics["recovery_impaired_recent"])
+        self.assertIn("no autonomic stress", result.narrative)
+
+    @patch.object(TrainingLoadAnalyzer, "visualize", return_value=MagicMock())
+    def test_recovery_impaired_flagged_when_rhr_elevated(self, _mock_viz):
+        """RHR spike during fatigued TSB should trigger recovery impairment."""
+        n = 60
+        dates = pd.date_range("2025-01-01", periods=n, freq="D")
+        # Low TSS early (CTL stays low), then spike hard (ATL >> CTL → TSB < -15)
+        tss_values = [20.0] * 45 + [150.0] * 15
+        df = pd.DataFrame({
+            "date": dates.strftime("%Y-%m-%d"),
+            "tss": tss_values,
+            "had_workout": [t > 0 for t in tss_values],
+        })
+        # Normal RHR baseline ~60, then spike to 75 on last days
+        rhr = [60.0] * (n - 5) + [75.0] * 5
+        hrv = [45.0] * n  # HRV stays normal
+        vitals = pd.DataFrame({
+            "date": dates.strftime("%Y-%m-%d"),
+            "resting_heart_rate_bpm": rhr,
+            "hrv_ms": hrv,
+        })
+        athena = self._make_mock_athena(df, vitals)
+        analyzer = TrainingLoadAnalyzer(athena)
+        result = analyzer.analyze()
+
+        self.assertGreater(result.statistics["recovery_impaired_days"], 0)
+        self.assertIn("recovery impairment", result.narrative)
 
 
 if __name__ == "__main__":

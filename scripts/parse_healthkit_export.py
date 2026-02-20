@@ -330,11 +330,18 @@ def parse_export(input_path):
                 else:
                     distance_mi = round(distance_val * KM_TO_MI, 2)
 
-            # Extract avg HR from WorkoutStatistics sub-elements
+            # Extract avg HR and calories from WorkoutStatistics sub-elements
             avg_hr = None
+            stats_calories = None
             for stat in elem.findall(".//WorkoutStatistics"):
-                if stat.get("type") == "HKQuantityTypeIdentifierHeartRate":
+                stat_type = stat.get("type")
+                if stat_type == "HKQuantityTypeIdentifierHeartRate":
                     avg_hr = safe_int(stat.get("average"))
+                elif stat_type == "HKQuantityTypeIdentifierActiveEnergyBurned":
+                    stats_calories = safe_float(stat.get("sum"))
+
+            # Prefer top-level totalEnergyBurned, fall back to WorkoutStatistics
+            final_calories = calories if calories else stats_calories
 
             acc.add_workout({
                 "date": date or "",
@@ -342,7 +349,7 @@ def parse_export(input_path):
                 "end_time": parse_datetime_iso(end_date) or "",
                 "workout_type": workout_type,
                 "duration_minutes": round(duration, 1) if duration else "",
-                "calories_burned": safe_int(calories) if calories else "",
+                "calories_burned": safe_int(final_calories) if final_calories else "",
                 "avg_heart_rate": avg_hr if avg_hr else "",
                 "distance_mi": distance_mi if distance_mi else "",
                 "source_app": source_name,
@@ -403,6 +410,14 @@ def parse_export_with_mindfulness(input_path):
 
             elem.clear()
 
+        elif elem.tag in ("WorkoutStatistics", "MetadataEntry", "WorkoutEvent", "WorkoutRoute"):
+            # Don't clear these — they're children of Workout elements and
+            # will be read when the parent Workout "end" event fires.
+            # However, iterparse fires "end" for children BEFORE the parent,
+            # so by the time we see the Workout, these are already processed.
+            # The real issue: we need to NOT clear them so findall() works on the parent.
+            pass
+
         elif elem.tag == "Workout":
             record_count += 1
             workout_type_raw = elem.get("workoutActivityType", "")
@@ -432,11 +447,18 @@ def parse_export_with_mindfulness(input_path):
                 else:
                     distance_mi = round(distance_val * KM_TO_MI, 2)
 
-            # Extract avg HR from WorkoutStatistics sub-elements
+            # Extract avg HR and calories from WorkoutStatistics sub-elements
             avg_hr = None
+            stats_calories = None
             for stat in elem.findall(".//WorkoutStatistics"):
-                if stat.get("type") == "HKQuantityTypeIdentifierHeartRate":
+                stat_type = stat.get("type")
+                if stat_type == "HKQuantityTypeIdentifierHeartRate":
                     avg_hr = safe_int(stat.get("average"))
+                elif stat_type == "HKQuantityTypeIdentifierActiveEnergyBurned":
+                    stats_calories = safe_float(stat.get("sum"))
+
+            # Prefer top-level totalEnergyBurned, fall back to WorkoutStatistics
+            final_calories = calories if calories else stats_calories
 
             acc.add_workout({
                 "date": date or "",
@@ -444,7 +466,7 @@ def parse_export_with_mindfulness(input_path):
                 "end_time": parse_datetime_iso(end_date) or "",
                 "workout_type": workout_type,
                 "duration_minutes": round(duration, 1) if duration else "",
-                "calories_burned": safe_int(calories) if calories else "",
+                "calories_burned": safe_int(final_calories) if final_calories else "",
                 "avg_heart_rate": avg_hr if avg_hr else "",
                 "distance_mi": distance_mi if distance_mi else "",
                 "source_app": source_name,

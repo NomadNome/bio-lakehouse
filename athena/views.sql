@@ -22,6 +22,7 @@ SELECT
     active_calories,
     peloton_calories,
     disciplines,
+    hk_workout_types,
     -- 7-day rolling averages
     AVG(readiness_score) OVER (ORDER BY date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS readiness_7day_avg,
     AVG(sleep_score) OVER (ORDER BY date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS sleep_7day_avg,
@@ -151,12 +152,13 @@ WITH workout_days AS (
         END AS readiness_bucket,
         -- Extract primary discipline (first in comma-separated list)
         CASE
-            WHEN disciplines LIKE '%Cycling%' AND disciplines NOT LIKE '%,%' THEN 'Cycling Only'
-            WHEN disciplines LIKE '%Strength%' AND disciplines NOT LIKE '%,%' THEN 'Strength Only'
-            WHEN disciplines LIKE '%Cycling%' AND disciplines LIKE '%Strength%' THEN 'Cycling + Strength'
-            WHEN disciplines LIKE '%Yoga%' OR disciplines LIKE '%Stretching%' OR disciplines LIKE '%Meditation%' THEN 'Recovery (Yoga/Stretch/Meditate)'
-            WHEN disciplines LIKE '%Cycling%' THEN 'Cycling + Other'
-            ELSE disciplines
+            WHEN disciplines LIKE '%Cycling%' THEN 'Cycling'
+            WHEN disciplines LIKE '%Strength%' OR hk_workout_types LIKE '%strength%' THEN 'Strength'
+            WHEN hk_workout_types LIKE '%walking%' OR hk_workout_types LIKE '%hiking%' THEN 'Walking'
+            WHEN hk_workout_types LIKE '%running%' OR disciplines LIKE '%Bootcamp%' OR hk_workout_types LIKE '%high_intensity%' THEN 'Cardio'
+            WHEN disciplines LIKE '%Yoga%' OR disciplines LIKE '%Stretching%' OR disciplines LIKE '%Meditation%'
+                 OR hk_workout_types LIKE '%yoga%' OR hk_workout_types LIKE '%flexibility%' OR hk_workout_types LIKE '%pilates%' THEN 'Recovery'
+            ELSE COALESCE(NULLIF(disciplines, ''), hk_workout_types, 'Other')
         END AS workout_type,
         total_output_kj,
         avg_watts,
@@ -415,24 +417,29 @@ SELECT
     max_avg_hr,
     peloton_calories,
     active_calories,
-    -- Training Stress Score (TSS)
+    hk_calories,
+    hk_workout_minutes,
+    -- Training Stress Score (TSS) — 5-tier fallback
     CASE
-        WHEN had_workout = false OR total_workout_minutes IS NULL OR total_workout_minutes = 0
-            THEN 0.0
+        WHEN had_workout = false THEN 0.0
+        -- Tier 1: Peloton power data (most accurate)
         WHEN total_output_kj IS NOT NULL AND total_output_kj > 0
-            -- Peloton-based TSS: (output_kj / 100) * (minutes / 60) * HR_factor, clamped 0-300
-            THEN LEAST(300.0, GREATEST(0.0,
-                (total_output_kj / 100.0)
-                * (total_workout_minutes / 60.0)
-                * LEAST(COALESCE(max_avg_hr, 140) / 180.0, 1.5)
-            ))
-        WHEN COALESCE(peloton_calories, 0) + COALESCE(active_calories, 0) > 0
-            -- HealthKit calorie fallback: (calories / 500) * (minutes / 30) * 0.85
-            THEN LEAST(300.0, GREATEST(0.0,
-                ((COALESCE(peloton_calories, 0) + COALESCE(active_calories, 0)) / 500.0)
-                * (total_workout_minutes / 30.0)
-                * 0.85
-            ))
+            THEN LEAST(300.0, total_output_kj * COALESCE(max_avg_hr, 140) / 600.0)
+        -- Tier 2: Peloton calories + duration (ride without power)
+        WHEN peloton_calories IS NOT NULL AND peloton_calories > 0
+             AND total_workout_minutes IS NOT NULL AND total_workout_minutes > 0
+            THEN LEAST(300.0, peloton_calories * total_workout_minutes / 150.0)
+        -- Tier 3: HealthKit active calories + duration (non-Peloton workout)
+        WHEN active_calories IS NOT NULL AND active_calories > 0
+             AND total_workout_minutes IS NOT NULL AND total_workout_minutes > 0
+            THEN LEAST(300.0, active_calories * total_workout_minutes / 450.0)
+        -- Tier 4: HealthKit workout calories + duration (Solidcore, yoga, etc.)
+        WHEN hk_calories IS NOT NULL AND hk_calories > 0
+             AND hk_workout_minutes IS NOT NULL AND hk_workout_minutes > 0
+            THEN LEAST(300.0, hk_calories * hk_workout_minutes / 450.0)
+        -- Tier 5: HealthKit active calories only (no duration recorded)
+        WHEN active_calories IS NOT NULL AND active_calories > 0
+            THEN LEAST(200.0, active_calories / 12.0)
         ELSE 0.0
     END AS tss
 FROM bio_gold.daily_readiness_performance

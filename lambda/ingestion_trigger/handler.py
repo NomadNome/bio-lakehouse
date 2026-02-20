@@ -94,17 +94,37 @@ def log_ingestion(file_path: str, metadata: dict) -> None:
     )
 
 
+def get_job_name(source):
+    """Return the Glue job name for a given source type."""
+    if source.startswith("oura/"):
+        return OURA_GLUE_JOB
+    elif source.startswith("peloton/"):
+        return PELOTON_GLUE_JOB
+    elif source.startswith("healthkit/"):
+        return HEALTHKIT_GLUE_JOB
+    return None
+
+
+def is_job_running(job_name):
+    """Check if a Glue job currently has an active run."""
+    try:
+        response = glue.get_job_runs(JobName=job_name, MaxResults=1)
+        runs = response.get("JobRuns", [])
+        if runs and runs[0].get("JobRunState") in ("STARTING", "RUNNING", "STOPPING"):
+            return True
+    except Exception as e:
+        print(f"Failed to check job status for {job_name}: {e}")
+    return False
+
+
 def trigger_glue_job(source, bucket, key):
     """Start the appropriate Glue job based on data source."""
-    job_name = None
-    if source.startswith("oura/"):
-        job_name = OURA_GLUE_JOB
-    elif source.startswith("peloton/"):
-        job_name = PELOTON_GLUE_JOB
-    elif source.startswith("healthkit/"):
-        job_name = HEALTHKIT_GLUE_JOB
-
+    job_name = get_job_name(source)
     if not job_name:
+        return None
+
+    if is_job_running(job_name):
+        print(f"Glue job {job_name} already running, skipping trigger")
         return None
 
     try:
@@ -125,6 +145,74 @@ def trigger_glue_job(source, bucket, key):
         return None
 
 
+def handle_batch_manifest(bucket, key):
+    """Process a batch manifest file and trigger Glue jobs for each source type."""
+    print(f"Batch manifest detected: s3://{bucket}/{key}")
+
+    try:
+        resp = s3.get_object(Bucket=bucket, Key=key)
+        manifest = json.loads(resp["Body"].read().decode("utf-8"))
+    except Exception as e:
+        print(f"Failed to read manifest: {e}")
+        return {"error": str(e)}
+
+    batch_id = manifest.get("batch_id", "unknown")
+    source_types = manifest.get("source_types", [])
+    file_count = manifest.get("file_count", 0)
+
+    print(f"Batch '{batch_id}': {file_count} files, sources={source_types}")
+
+    triggered = []
+    skipped = []
+
+    for source in source_types:
+        job_name = get_job_name(source)
+        if not job_name:
+            print(f"No Glue job mapped for source: {source}")
+            skipped.append(source)
+            continue
+
+        if is_job_running(job_name):
+            print(f"Glue job {job_name} already running, skipping")
+            skipped.append(source)
+            continue
+
+        try:
+            response = glue.start_job_run(
+                JobName=job_name,
+                Arguments={
+                    "--source_bucket": bucket,
+                    "--source_type": source,
+                    "--batch_id": batch_id,
+                },
+            )
+            run_id = response.get("JobRunId")
+            print(f"Triggered {job_name} for {source}, run ID: {run_id}")
+            triggered.append({"source": source, "job_name": job_name, "run_id": run_id})
+        except Exception as e:
+            print(f"Failed to trigger {job_name}: {e}")
+            skipped.append(source)
+
+    # Log batch ingestion to DynamoDB
+    log_ingestion(
+        file_path=f"s3://{bucket}/{key}",
+        metadata={
+            "source": "batch",
+            "validation": {"valid": True},
+            "file_size": file_count,
+            "valid": True,
+            "batch_id": batch_id,
+            "source_types": source_types,
+        },
+    )
+
+    return {
+        "batch_id": batch_id,
+        "triggered": triggered,
+        "skipped": skipped,
+    }
+
+
 def lambda_handler(event, context):
     """Process S3 PUT event for Bronze bucket ingestion."""
     results = []
@@ -135,6 +223,12 @@ def lambda_handler(event, context):
         size = record["s3"]["object"].get("size", 0)
 
         print(f"Processing: s3://{bucket}/{key} ({size} bytes)")
+
+        # Batch manifest handling — trigger normalizers once for bulk uploads
+        if key.endswith("_manifest.json"):
+            batch_result = handle_batch_manifest(bucket, key)
+            results.append({"key": key, "source": "batch", "batch": batch_result})
+            continue
 
         # Detect source type from path
         source = detect_source(key)

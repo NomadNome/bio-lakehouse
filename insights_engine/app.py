@@ -9,6 +9,9 @@ Multi-page app with:
 
 from __future__ import annotations
 
+import time
+from datetime import date
+
 import streamlit as st
 import pandas as pd
 
@@ -93,9 +96,15 @@ with st.sidebar:
     )
     st.divider()
 
-    # Quick metrics
+    # Quick metrics — bypass AthenaClient cache so sidebar always reflects today
     try:
         athena = get_athena()
+        # Clear cached sidebar queries so CURRENT_DATE re-evaluates on each app load
+        stale_keys = [k for k, (_, ts) in athena._query_cache.items()
+                      if time.time() - ts > 300]  # expire after 5 min for sidebar
+        for k in stale_keys:
+            athena._query_cache.pop(k, None)
+
         metrics_df = athena.execute_query("""
             SELECT
                 ROUND(AVG(readiness_score), 0) AS readiness,
@@ -138,6 +147,37 @@ with st.sidebar:
             c2.metric("HRV", f"{hk_row['avg_hrv']:.0f} ms")
             if hk_row.get("avg_vo2") and float(hk_row["avg_vo2"]) > 0:
                 st.metric("VO2 Max", f"{hk_row['avg_vo2']:.1f}")
+    except Exception:
+        pass
+
+    # Data freshness indicator
+    try:
+        freshness_df = athena.execute_query("""
+            SELECT
+                MAX(COALESCE(
+                    TRY(CAST(date AS date)),
+                    TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
+                )) AS latest_date
+            FROM bio_gold.dashboard_30day
+        """)
+        if not freshness_df.empty and freshness_df.iloc[0]["latest_date"] is not None:
+            import pandas as _pd
+            latest = _pd.to_datetime(freshness_df.iloc[0]["latest_date"]).date()
+            days_old = (date.today() - latest).days
+            if days_old == 0:
+                freshness_icon = "🟢"
+                freshness_label = "today"
+            elif days_old == 1:
+                freshness_icon = "🟢"
+                freshness_label = "yesterday"
+            elif days_old <= 3:
+                freshness_icon = "🟡"
+                freshness_label = f"{days_old}d ago"
+            else:
+                freshness_icon = "🔴"
+                freshness_label = f"{days_old}d ago"
+            st.divider()
+            st.caption(f"{freshness_icon} Latest data: **{latest}** ({freshness_label})")
     except Exception:
         pass
 
@@ -257,7 +297,7 @@ elif page == "📊 Insights":
     athena = get_athena()
 
     # Run analyzers with caching
-    @st.cache_data(ttl=3600, show_spinner="Analyzing...")
+    @st.cache_resource(ttl=3600, show_spinner="Analyzing...")
     def run_all_insights():
         from insights_engine.insights.sleep_readiness import SleepReadinessAnalyzer
         from insights_engine.insights.workout_recovery import WorkoutRecoveryAnalyzer
@@ -408,7 +448,7 @@ elif page == "📊 Insights":
 
         body_data = load_body_comp()
 
-        if not body_data.empty and len(body_data) >= 3:
+        if not body_data.empty and len(body_data) >= 2:
             body_data["date"] = pd.to_datetime(body_data["date"])
             for col in ["weight_lbs", "body_fat_pct", "bmi", "lean_body_mass_lbs"]:
                 body_data[col] = pd.to_numeric(body_data[col], errors="coerce")
@@ -443,7 +483,7 @@ elif page == "📊 Insights":
             has_weight = body_data["weight_lbs"].notna().any()
             has_bf = body_data["body_fat_pct"].notna().any()
             has_lm = body_data["lean_body_mass_lbs"].notna().any()
-            row_count = sum([has_weight, has_bf, has_lm])
+            row_count = int(sum([has_weight, has_bf, has_lm]))
 
             if row_count > 0:
                 titles = []

@@ -7,12 +7,10 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/python3</string>
-        <!-- UPDATE: Replace with your actual project path -->
-        <string>$HOME/Desktop/Bio Lakehouse/scripts/run_weekly_report.py</string>
+        <string>/bin/bash</string>
+        <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/scripts/run-weekly-report.sh</string>
     </array>
 
-    <!-- Monday at 7:00 AM EST (12:00 UTC) -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Weekday</key>
@@ -23,23 +21,12 @@
         <integer>0</integer>
     </dict>
 
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>ANTHROPIC_API_KEY</key>
-        <string>YOUR_API_KEY_HERE</string>
-        <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin</string>
-    </dict>
-
     <key>StandardOutPath</key>
-    <!-- UPDATE: Replace with your actual project path -->
-    <string>$HOME/Desktop/Bio Lakehouse/logs/weekly-report.log</string>
+    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/logs/weekly-report.log</string>
     <key>StandardErrorPath</key>
-    <!-- UPDATE: Replace with your actual project path -->
-    <string>$HOME/Desktop/Bio Lakehouse/logs/weekly-report-error.log</string>
+    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/logs/weekly-report-error.log</string>
 
     <key>WorkingDirectory</key>
-    <!-- UPDATE: Replace with your actual project path -->
-    <string>$HOME/Desktop/Bio Lakehouse</string>
+    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse</string>
 </dict>
 </plist>

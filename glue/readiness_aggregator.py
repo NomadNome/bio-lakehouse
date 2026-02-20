@@ -112,13 +112,14 @@ peloton_daily = peloton_daily.withColumn(
 # HealthKit daily vitals
 hk_vitals_df = read_silver_safe(f"s3://{SILVER_BUCKET}/healthkit_daily_vitals/")
 if hk_vitals_df is not None:
-    hk_vitals_daily = hk_vitals_df.select(
-        F.col("date"),
-        F.col("resting_heart_rate_bpm"),
-        F.col("hrv_ms"),
-        F.col("vo2_max"),
-        F.col("blood_oxygen_pct"),
-        F.col("respiratory_rate"),
+    # Deduplicate: multiple readings per day (e.g. Apple Watch records several RHR).
+    # Take the last (max) RHR/HRV/VO2 per day, average for blood_oxygen/respiratory_rate.
+    hk_vitals_daily = hk_vitals_df.groupBy("date").agg(
+        F.last("resting_heart_rate_bpm", ignorenulls=True).alias("resting_heart_rate_bpm"),
+        F.last("hrv_ms", ignorenulls=True).alias("hrv_ms"),
+        F.last("vo2_max", ignorenulls=True).alias("vo2_max"),
+        F.avg("blood_oxygen_pct").alias("blood_oxygen_pct"),
+        F.avg("respiratory_rate").alias("respiratory_rate"),
     )
 else:
     hk_vitals_daily = None
@@ -144,25 +145,24 @@ else:
 # HealthKit body measurements
 hk_body_df = read_silver_safe(f"s3://{SILVER_BUCKET}/healthkit_body/")
 if hk_body_df is not None:
-    hk_body_daily = hk_body_df.select(
-        F.col("date"),
-        F.col("weight_lbs"),
-        F.col("body_fat_pct"),
-        F.col("bmi"),
-        F.col("lean_body_mass_lbs"),
-        F.col("device_name"),
+    # Deduplicate: Hume pod / scale may record multiple readings per day.
+    # Take the last reading for each metric per date.
+    hk_body_daily = hk_body_df.groupBy("date").agg(
+        F.last("weight_lbs", ignorenulls=True).alias("weight_lbs"),
+        F.last("body_fat_pct", ignorenulls=True).alias("body_fat_pct"),
+        F.last("bmi", ignorenulls=True).alias("bmi"),
+        F.last("lean_body_mass_lbs", ignorenulls=True).alias("lean_body_mass_lbs"),
     )
 else:
     hk_body_daily = None
     print("No HealthKit body data available yet")
 
-# HealthKit mindfulness — already daily aggregated
+# HealthKit mindfulness — deduplicate to one row per date
 hk_mindfulness_df = read_silver_safe(f"s3://{SILVER_BUCKET}/healthkit_mindfulness/")
 if hk_mindfulness_df is not None:
-    hk_mindfulness_daily = hk_mindfulness_df.select(
-        F.col("date"),
-        F.col("duration_minutes").alias("mindfulness_minutes"),
-        F.col("session_count").alias("mindfulness_session_count"),
+    hk_mindfulness_daily = hk_mindfulness_df.groupBy("date").agg(
+        F.sum("duration_minutes").alias("mindfulness_minutes"),
+        F.sum("session_count").alias("mindfulness_session_count"),
     )
 else:
     hk_mindfulness_daily = None

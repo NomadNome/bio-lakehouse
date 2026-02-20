@@ -125,7 +125,7 @@ class WeeklyReportGenerator:
 
         # Generate narrative via Claude
         print("Generating narrative via Claude...")
-        narrative = self._generate_narrative(insights, week_start, week_ending)
+        narrative = self._generate_narrative(insights, week_start, week_ending, key_metrics)
 
         # Render chart images as base64
         print("Rendering chart images...")
@@ -198,7 +198,9 @@ class WeeklyReportGenerator:
             ROUND(AVG(resting_heart_rate_bpm), 0) AS avg_rhr,
             ROUND(AVG(hrv_ms), 0) AS avg_hrv,
             ROUND(AVG(vo2_max), 1) AS avg_vo2,
-            ROUND(AVG(weight_lbs), 1) AS avg_weight
+            ROUND(AVG(weight_lbs), 1) AS avg_weight,
+            ROUND(AVG(mindfulness_minutes), 0) AS avg_mindfulness,
+            SUM(CASE WHEN mindfulness_minutes > 0 THEN 1 ELSE 0 END) AS mindfulness_days
         FROM bio_gold.daily_readiness_performance
         WHERE COALESCE(
                 TRY(CAST(date AS date)),
@@ -247,13 +249,19 @@ class WeeklyReportGenerator:
             if pd.notna(avg_weight):
                 metrics.append({"value": f"{float(avg_weight):.1f} lbs", "label": "Avg Weight", "trend_class": ""})
 
+            avg_mindfulness = row.get("avg_mindfulness")
+            mindfulness_days = row.get("mindfulness_days", 0)
+            if pd.notna(avg_mindfulness) and float(avg_mindfulness) > 0:
+                metrics.append({"value": f"{float(avg_mindfulness):.0f} min/day ({int(mindfulness_days)} days)", "label": "Mindfulness", "trend_class": ""})
+
             return metrics
         except Exception as e:
             print(f"  WARNING: Could not get key metrics: {e}")
             return []
 
     def _generate_narrative(
-        self, insights: list[InsightResult], week_start: date, week_end: date
+        self, insights: list[InsightResult], week_start: date, week_end: date,
+        key_metrics: list[dict] | None = None,
     ) -> str:
         """Use Claude to generate a cohesive weekly narrative."""
         system_prompt = (PROMPTS_DIR / "insight_narrator.txt").read_text()
@@ -268,8 +276,14 @@ class WeeklyReportGenerator:
                 summary += f"Caveats: {'; '.join(r.caveats)}\n"
             insight_summaries.append(summary)
 
-        user_prompt = f"""Generate the weekly bio-optimization report for {week_start} to {week_end}.
+        # Format key metrics so Claude has the actual numbers
+        metrics_block = ""
+        if key_metrics:
+            metrics_lines = [f"- {m['label']}: {m['value']}" for m in key_metrics]
+            metrics_block = "\n### Key Metrics (This Week)\n" + "\n".join(metrics_lines) + "\n"
 
+        user_prompt = f"""Generate the weekly bio-optimization report for {week_start} to {week_end}.
+{metrics_block}
 Here are the analysis results from each insight module:
 
 {"".join(insight_summaries)}

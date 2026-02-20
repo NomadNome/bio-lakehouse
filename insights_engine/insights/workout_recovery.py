@@ -27,6 +27,7 @@ class WorkoutRecoveryAnalyzer(InsightAnalyzer):
             a.date AS workout_date,
             a.readiness_score,
             a.disciplines,
+            a.hk_workout_types,
             a.had_workout,
             a.total_output_kj,
             b.readiness_score AS next_day_readiness
@@ -45,15 +46,39 @@ class WorkoutRecoveryAnalyzer(InsightAnalyzer):
                 & (pd.to_datetime(df["workout_date"]).dt.date <= date_range.end)
             ]
 
-        # Categorize: rest day vs cycling vs other workout
+        # Check minimum data threshold — need at least 20 unique workout days
+        unique_days = df["workout_date"].nunique()
+        if unique_days < 20:
+            return InsightResult(
+                insight_type="workout_recovery",
+                title="Workout Type → Next-Day Recovery",
+                narrative=(
+                    f"Not enough data yet ({unique_days} unique workout days, need 20+). "
+                    "This insight will appear once more data accumulates."
+                ),
+                statistics={"total_n": len(df), "unique_days": unique_days},
+                caveats=["Insufficient data — minimum 20 unique workout days required."],
+                data=df,
+            )
+
+        # Categorize workout type from Peloton disciplines + HealthKit types
         def categorize(row):
             if not row.get("had_workout") or row.get("had_workout") == "false":
                 return "Rest Day"
-            disciplines = str(row.get("disciplines", ""))
-            if "Cycling" in disciplines:
+            disciplines = str(row.get("disciplines", "")).lower()
+            hk_types = str(row.get("hk_workout_types", "")).lower()
+            combined = f"{disciplines},{hk_types}"
+
+            if "cycling" in combined:
                 return "Cycling"
-            if "Strength" in disciplines:
+            if "strength" in combined or "strength_training" in hk_types:
                 return "Strength"
+            if "walking" in combined or "hiking" in combined:
+                return "Walking"
+            if "running" in combined or "bootcamp" in combined or "hiit" in hk_types or "high_intensity" in hk_types:
+                return "Cardio"
+            if "yoga" in combined or "stretching" in combined or "meditation" in combined or "flexibility" in hk_types or "pilates" in hk_types:
+                return "Recovery"
             return "Other Workout"
 
         df["workout_category"] = df.apply(categorize, axis=1)
@@ -61,7 +86,7 @@ class WorkoutRecoveryAnalyzer(InsightAnalyzer):
         groups = {}
         for cat in df["workout_category"].unique():
             vals = df[df["workout_category"] == cat]["next_day_readiness"].dropna().astype(float)
-            if len(vals) >= 2:
+            if len(vals) >= 5:
                 groups[cat] = {
                     "values": vals.values,
                     "mean": round(float(vals.mean()), 1),
@@ -112,7 +137,7 @@ class WorkoutRecoveryAnalyzer(InsightAnalyzer):
         df = result.data
         fig = go.Figure()
 
-        colors = [theme.PRIMARY, theme.SECONDARY, theme.ACCENT, theme.WARNING]
+        colors = [theme.PRIMARY, theme.SECONDARY, theme.ACCENT, theme.WARNING, "#8B5CF6", "#06B6D4", "#F97316"]
         categories = sorted(df["workout_category"].unique())
 
         for i, cat in enumerate(categories):

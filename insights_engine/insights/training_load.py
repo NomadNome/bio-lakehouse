@@ -58,7 +58,7 @@ class TrainingLoadAnalyzer(InsightAnalyzer):
 
         df["date"] = pd.to_datetime(df["date"])
         df["tss"] = pd.to_numeric(df["tss"], errors="coerce").fillna(0)
-        df = df.sort_values("date").reset_index(drop=True)
+        df = df.drop_duplicates(subset=["date"]).sort_values("date").reset_index(drop=True)
 
         if date_range:
             df = df[
@@ -71,8 +71,41 @@ class TrainingLoadAnalyzer(InsightAnalyzer):
         df["atl"] = compute_ema(df["tss"], span=7)
         df["tsb"] = df["ctl"] - df["atl"]
 
+        # Fetch RHR and HRV for recovery quality overlay
+        vitals_df = self.athena.execute_query("""
+            SELECT date, resting_heart_rate_bpm, hrv_ms
+            FROM bio_gold.daily_readiness_performance
+            WHERE resting_heart_rate_bpm IS NOT NULL
+            ORDER BY date
+        """)
+        if not vitals_df.empty:
+            vitals_df["date"] = pd.to_datetime(vitals_df["date"])
+            vitals_df["resting_heart_rate_bpm"] = pd.to_numeric(
+                vitals_df["resting_heart_rate_bpm"], errors="coerce"
+            )
+            vitals_df["hrv_ms"] = pd.to_numeric(vitals_df["hrv_ms"], errors="coerce")
+            vitals_df = vitals_df.drop_duplicates(subset=["date"])
+            df = df.merge(vitals_df, on="date", how="left")
+        else:
+            df["resting_heart_rate_bpm"] = np.nan
+            df["hrv_ms"] = np.nan
+
+        # Compute 14-day rolling baselines and recovery impairment flags
+        df["baseline_rhr"] = df["resting_heart_rate_bpm"].rolling(14, min_periods=7).mean()
+        df["baseline_hrv"] = df["hrv_ms"].rolling(14, min_periods=7).mean()
+        df["rhr_elevated"] = df["resting_heart_rate_bpm"] > (df["baseline_rhr"] * 1.10)
+        df["hrv_suppressed"] = df["hrv_ms"] < (df["baseline_hrv"] * 0.85)
+        df["recovery_impaired"] = (
+            (df["tsb"] < -15)
+            & (df["rhr_elevated"] | df["hrv_suppressed"])
+        )
+
         latest = df.iloc[-1]
         form = classify_form(latest["tsb"])
+
+        last_90 = df.tail(90)
+        recovery_impaired_days = int(last_90["recovery_impaired"].sum())
+        recovery_impaired_recent = bool(df.tail(7)["recovery_impaired"].any())
 
         statistics = {
             "n": len(df),
@@ -83,6 +116,8 @@ class TrainingLoadAnalyzer(InsightAnalyzer):
             "form": form,
             "avg_tss_7d": round(float(df["tss"].tail(7).mean()), 1),
             "avg_tss_30d": round(float(df["tss"].tail(30).mean()), 1),
+            "recovery_impaired_days": recovery_impaired_days,
+            "recovery_impaired_recent": recovery_impaired_recent,
         }
 
         result = InsightResult(
@@ -109,12 +144,16 @@ class TrainingLoadAnalyzer(InsightAnalyzer):
         df = result.data
         s = result.statistics
 
+        # Show last 90 days for readable detail
+        cutoff = df["date"].max() - pd.Timedelta(days=90)
+        plot_df = df[df["date"] >= cutoff].copy()
+
         fig = make_subplots(
             rows=2, cols=1,
             shared_xaxes=True,
             vertical_spacing=0.08,
             subplot_titles=(
-                "Chronic (CTL) vs Acute (ATL) Training Load",
+                "Chronic (CTL) vs Acute (ATL) Training Load — Last 90 Days",
                 "Training Stress Balance (TSB) — Form Curve",
             ),
         )
@@ -122,7 +161,7 @@ class TrainingLoadAnalyzer(InsightAnalyzer):
         # Row 1: CTL and ATL lines
         fig.add_trace(
             go.Scatter(
-                x=df["date"], y=df["ctl"],
+                x=plot_df["date"], y=plot_df["ctl"],
                 mode="lines", name="CTL (42-day)",
                 line=dict(color=theme.PRIMARY, width=2),
             ),
@@ -130,7 +169,7 @@ class TrainingLoadAnalyzer(InsightAnalyzer):
         )
         fig.add_trace(
             go.Scatter(
-                x=df["date"], y=df["atl"],
+                x=plot_df["date"], y=plot_df["atl"],
                 mode="lines", name="ATL (7-day)",
                 line=dict(color=theme.SECONDARY, width=2),
             ),
@@ -143,11 +182,11 @@ class TrainingLoadAnalyzer(InsightAnalyzer):
             else theme.ACCENT if v >= 0
             else theme.WARNING if v >= -15
             else theme.DANGER
-            for v in df["tsb"]
+            for v in plot_df["tsb"]
         ]
         fig.add_trace(
             go.Bar(
-                x=df["date"], y=df["tsb"],
+                x=plot_df["date"], y=plot_df["tsb"],
                 name="TSB",
                 marker_color=tsb_colors,
                 opacity=0.7,
@@ -167,9 +206,28 @@ class TrainingLoadAnalyzer(InsightAnalyzer):
                 annotation_font_size=9,
             )
 
+        # Overlay recovery-impaired markers on TSB chart
+        if "recovery_impaired" in plot_df.columns:
+            impaired = plot_df[plot_df["recovery_impaired"] == True]
+            if not impaired.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=impaired["date"], y=impaired["tsb"],
+                        mode="markers", name="Recovery Impaired",
+                        marker=dict(
+                            color=theme.DANGER, size=12, symbol="diamond",
+                            line=dict(width=2, color="white"),
+                        ),
+                    ),
+                    row=2, col=1,
+                )
+
         theme.style_figure(fig, n=s["n"], height=600)
-        fig.update_yaxes(title_text="Training Load", row=1, col=1)
-        fig.update_yaxes(title_text="TSB", row=2, col=1)
+        # Fit y-axes to visible data with padding
+        ctl_atl_max = max(plot_df["ctl"].max(), plot_df["atl"].max(), 10)
+        fig.update_yaxes(title_text="Training Load", range=[0, ctl_atl_max * 1.15], row=1, col=1)
+        tsb_abs_max = max(abs(plot_df["tsb"].min()), abs(plot_df["tsb"].max()), 20)
+        fig.update_yaxes(title_text="TSB", range=[-tsb_abs_max * 1.15, tsb_abs_max * 1.15], row=2, col=1)
 
         return fig
 
@@ -183,9 +241,29 @@ class TrainingLoadAnalyzer(InsightAnalyzer):
         }
         form_text = form_descriptions[s["form"]]
 
-        return (
+        base = (
             f"**Current Form: {s['form'].title()}** — "
             f"CTL={s['latest_ctl']:.0f}, ATL={s['latest_atl']:.0f}, TSB={s['latest_tsb']:+.0f}. "
             f"{form_text} "
             f"7-day avg TSS: {s['avg_tss_7d']:.0f}, 30-day avg: {s['avg_tss_30d']:.0f}."
         )
+
+        impaired_days = s.get("recovery_impaired_days", 0)
+        impaired_recent = s.get("recovery_impaired_recent", False)
+        if impaired_days > 0:
+            recovery_note = (
+                f" In the last 90 days, **{impaired_days} day(s)** showed recovery impairment "
+                "(fatigued TSB confirmed by elevated RHR or suppressed HRV)."
+            )
+            if impaired_recent:
+                recovery_note += (
+                    " **Warning:** recovery impairment detected in the last 7 days — "
+                    "consider prioritizing rest."
+                )
+        else:
+            recovery_note = (
+                " No recovery impairment detected — training fatigue appears manageable "
+                "with no autonomic stress signals."
+            )
+
+        return base + recovery_note

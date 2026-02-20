@@ -107,27 +107,30 @@ class ReadinessTrendAnalyzer(InsightAnalyzer):
         df = result.data
         fig = go.Figure()
 
-        # Daily points
+        # Daily — subtle background context
         fig.add_trace(go.Scatter(
             x=df["date"], y=df["readiness_score"],
-            mode="markers",
-            marker=dict(color=theme.PRIMARY, size=5, opacity=0.5),
+            mode="lines+markers",
+            line=dict(color=theme.PRIMARY, width=1),
+            marker=dict(color=theme.PRIMARY, size=4),
+            opacity=0.35,
             name="Daily",
         ))
 
-        # 7-day MA
+        # 7-day MA — primary trend (bold)
         fig.add_trace(go.Scatter(
             x=df["date"], y=df["ma_7"],
             mode="lines",
-            line=dict(color=theme.ACCENT, width=2),
+            line=dict(color=theme.ACCENT, width=3),
             name="7-day avg",
         ))
 
-        # 14-day MA
+        # 14-day MA — secondary reference
         fig.add_trace(go.Scatter(
             x=df["date"], y=df["ma_14"],
             mode="lines",
             line=dict(color=theme.SECONDARY, width=2, dash="dash"),
+            opacity=0.7,
             name="14-day avg",
         ))
 
