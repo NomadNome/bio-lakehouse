@@ -25,9 +25,7 @@ sns = boto3.client("sns")
 # Environment
 SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
 ATHENA_DATABASE = os.environ.get("ATHENA_DATABASE", "bio_gold")
-ATHENA_RESULTS_BUCKET = os.environ.get(
-    "ATHENA_RESULTS_BUCKET", "bio-lakehouse-athena-results-000000000000"
-)
+ATHENA_RESULTS_BUCKET = os.environ.get("ATHENA_RESULTS_BUCKET", "")
 
 
 def run_athena_query(sql):

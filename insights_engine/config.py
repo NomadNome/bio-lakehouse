@@ -13,13 +13,8 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 # AWS Configuration
 AWS_CONFIG = {
     "athena_database": os.environ.get("BIO_ATHENA_DATABASE", "bio_gold"),
-    "athena_results_bucket": os.environ.get(
-        "BIO_ATHENA_RESULTS_BUCKET",
-        "bio-lakehouse-athena-results-000000000000",
-    ),
-    "gold_bucket": os.environ.get(
-        "BIO_S3_GOLD_BUCKET", "bio-lakehouse-gold-000000000000"
-    ),
+    "athena_results_bucket": os.environ.get("BIO_ATHENA_RESULTS_BUCKET", ""),
+    "gold_bucket": os.environ.get("BIO_S3_GOLD_BUCKET", ""),
     "aws_region": os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
 }
 

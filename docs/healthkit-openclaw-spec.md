@@ -7,7 +7,7 @@ OpenClaw parses the Apple Health `export.xml` file (exported via iPhone Health a
 ## Target Bucket
 
 ```
-s3://bio-lakehouse-bronze-000000000000/healthkit/
+s3://bio-lakehouse-bronze-<AWS_ACCOUNT_ID>/healthkit/
 ```
 
 ## Hive Partitioning
@@ -129,6 +129,6 @@ Uploading a CSV to the Bronze bucket triggers the ingestion Lambda, which:
 1. Export Apple Health data from iPhone
 2. Run parser: python3 scripts/parse_healthkit_export.py --input export.xml
 3. Upload staged CSVs to S3:
-   aws s3 sync bronze_staged/healthkit/ s3://bio-lakehouse-bronze-000000000000/healthkit/ --sse AES256
+   aws s3 sync bronze_staged/healthkit/ s3://bio-lakehouse-bronze-<AWS_ACCOUNT_ID>/healthkit/ --sse AES256
 4. Pipeline auto-triggers: Lambda → Glue normalizer → Silver Parquet → Gold aggregation
 ```

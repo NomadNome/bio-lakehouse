@@ -11,17 +11,17 @@ This document specifies the S3 landing zone for Peloton workout data pushed by t
 ## S3 Path Structure
 
 ```
-s3://bio-lakehouse-bronze-000000000000/peloton/workouts/year=YYYY/month=MM/day=DD/workouts.csv
+s3://bio-lakehouse-bronze-<AWS_ACCOUNT_ID>/peloton/workouts/year=YYYY/month=MM/day=DD/workouts.csv
 ```
 
 **Example:**
 ```
-s3://bio-lakehouse-bronze-000000000000/peloton/workouts/year=2026/month=02/day=18/workouts.csv
+s3://bio-lakehouse-bronze-<AWS_ACCOUNT_ID>/peloton/workouts/year=2026/month=02/day=18/workouts.csv
 ```
 
 ### Path Components
 
-- **Bucket:** `bio-lakehouse-bronze-000000000000` (bronze layer, environment-specific)
+- **Bucket:** `bio-lakehouse-bronze-<AWS_ACCOUNT_ID>` (bronze layer, environment-specific)
 - **Prefix:** `peloton/workouts/` (data source identifier)
 - **Partitioning:** Hive-style partitions by year, month, day
 - **Filename:** `workouts.csv` (or timestamped variant: `workouts_20260218_173534.csv`)
@@ -102,7 +102,7 @@ workout_timestamp,live_on_demand,instructor_name,length_minutes,fitness_discipli
 
 ```python
 s3_client.put_object(
-    Bucket='bio-lakehouse-bronze-000000000000',
+    Bucket='bio-lakehouse-bronze-<AWS_ACCOUNT_ID>',
     Key='peloton/workouts/year=2026/month=02/day=18/workouts.csv',
     Body=csv_content,
     ServerSideEncryption='AES256',  # REQUIRED by bucket policy
@@ -126,7 +126,7 @@ The OpenClaw agent must have:
   "Action": [
     "s3:PutObject"
   ],
-  "Resource": "arn:aws:s3:::bio-lakehouse-bronze-000000000000/peloton/workouts/*"
+  "Resource": "arn:aws:s3:::bio-lakehouse-bronze-<AWS_ACCOUNT_ID>/peloton/workouts/*"
 }
 ```
 
@@ -142,7 +142,7 @@ Once the file lands in S3:
 4. **ETL Processing** (`glue/jobs/peloton_normalizer.py`):
    - Parse `workout_timestamp` into `workout_date`, `workout_time`, `utc_offset`
    - Convert types per schema
-   - Write Parquet to Silver: `s3://bio-lakehouse-silver-000000000000/peloton/workouts/`
+   - Write Parquet to Silver: `s3://bio-lakehouse-silver-<AWS_ACCOUNT_ID>/peloton/workouts/`
 5. **Silver Available** for downstream analytics/aggregation
 
 ## OpenClaw Agent Implementation
@@ -173,7 +173,7 @@ cd ~/.openclaw/workspace/scripts
 ### 1. Confirm S3 Upload
 
 ```bash
-aws s3 ls s3://bio-lakehouse-bronze-000000000000/peloton/workouts/year=2026/month=02/day=18/ --human-readable
+aws s3 ls s3://bio-lakehouse-bronze-<AWS_ACCOUNT_ID>/peloton/workouts/year=2026/month=02/day=18/ --human-readable
 ```
 
 Expected output:
@@ -187,7 +187,7 @@ Expected output:
 aws dynamodb query \
   --table-name bio_ingestion_log \
   --key-condition-expression "file_path = :fp" \
-  --expression-attribute-values '{":fp":{"S":"s3://bio-lakehouse-bronze-000000000000/peloton/workouts/year=2026/month=02/day=18/workouts_20260218_173627.csv"}}' \
+  --expression-attribute-values '{":fp":{"S":"s3://bio-lakehouse-bronze-<AWS_ACCOUNT_ID>/peloton/workouts/year=2026/month=02/day=18/workouts_20260218_173627.csv"}}' \
   --limit 1
 ```
 

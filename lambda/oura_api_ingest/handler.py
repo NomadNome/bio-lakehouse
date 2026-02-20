@@ -28,7 +28,7 @@ s3 = boto3.client("s3")
 
 # Configuration
 SSM_TOKEN_PARAM = os.environ.get("SSM_TOKEN_PARAM", "/bio-lakehouse/oura-api-token")
-BRONZE_BUCKET = os.environ.get("BRONZE_BUCKET", "bio-lakehouse-bronze-000000000000")
+BRONZE_BUCKET = os.environ.get("BRONZE_BUCKET", "")
 DATA_TYPES = ["readiness", "sleep", "activity"]
 
 S3_PREFIX_MAP = {
