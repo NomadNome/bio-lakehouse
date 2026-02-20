@@ -10,7 +10,8 @@
 
 set -euo pipefail
 
-BUCKET="bio-lakehouse-bronze-069899605581"
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+BUCKET="bio-lakehouse-bronze-${ACCOUNT_ID}"
 
 if [[ $# -lt 2 ]]; then
     echo "Usage: $0 <local_directory> <source_type>"
