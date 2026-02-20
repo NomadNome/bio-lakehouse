@@ -91,6 +91,7 @@ HEALTHKIT_BODY_SCHEMA = StructType(
         StructField("body_fat_pct", DoubleType(), True),
         StructField("bmi", DoubleType(), True),
         StructField("lean_body_mass_lbs", DoubleType(), True),
+        StructField("device_name", StringType(), True),
     ]
 )
 
@@ -317,16 +318,28 @@ def calculate_hr_zones(df: DataFrame, max_hr: int = 200) -> DataFrame:
 FHIR_LOINC_CODES = {
     "heart_rate": "8867-4",
     "steps": "55423-8",
+    "hrv": "80404-7",
+    "vo2_max": "60842-2",
+    "body_weight": "29463-7",
+    "blood_oxygen": "2708-6",
 }
 
 FHIR_LOINC_DISPLAY = {
     "heart_rate": "Heart rate",
     "steps": "Number of steps in 24 hour Measured",
+    "hrv": "R-R interval.standard deviation (Heart rate variability)",
+    "vo2_max": "Oxygen consumption (VO2 max)",
+    "body_weight": "Body weight",
+    "blood_oxygen": "Oxygen saturation in Arterial blood by Pulse oximetry",
 }
 
 FHIR_UCUM_UNITS = {
     "heart_rate": "/min",
     "steps": "/d",
+    "hrv": "ms",
+    "vo2_max": "mL/kg/min",
+    "body_weight": "[lb_av]",
+    "blood_oxygen": "%",
 }
 
 FHIR_CATEGORY_CODES = {
@@ -353,6 +366,10 @@ FHIR_CATEGORY_CODES = {
 FHIR_METRIC_CATEGORY = {
     "heart_rate": "vital-signs",
     "steps": "activity",
+    "hrv": "vital-signs",
+    "vo2_max": "vital-signs",
+    "body_weight": "vital-signs",
+    "blood_oxygen": "vital-signs",
 }
 
 # UUID v5 namespace for Bio Lakehouse FHIR resources

@@ -18,6 +18,7 @@ SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from parse_healthkit_export import (
+    BODY_HEADERS,
     HealthKitAccumulator,
     normalize_workout_type,
     parse_date,
@@ -142,6 +143,29 @@ class TestHealthKitParser(unittest.TestCase):
         acc.add_vital("HKQuantityTypeIdentifierHeartRateVariabilitySDNN", "2025-11-25", 42.0)
         rows = acc.aggregate_vitals()
         assert rows[0]["hrv_ms"] == 42.0
+
+    def test_device_name_in_body_headers(self):
+        assert "device_name" in BODY_HEADERS
+
+    def test_device_name_flows_through_aggregate_body(self):
+        acc = HealthKitAccumulator()
+        acc.add_body(
+            "HKQuantityTypeIdentifierBodyMass", "2026-02-19", 80.0, "kg",
+            source_name="Hume Health"
+        )
+        acc.add_body(
+            "HKQuantityTypeIdentifierBodyFatPercentage", "2026-02-19", 0.19, "%",
+            source_name="Hume Health"
+        )
+        rows = acc.aggregate_body()
+        assert len(rows) == 1
+        assert rows[0]["device_name"] == "Hume Health"
+
+    def test_device_name_defaults_to_empty(self):
+        acc = HealthKitAccumulator()
+        acc.add_body("HKQuantityTypeIdentifierBodyMass", "2025-11-25", 80.0, "kg")
+        rows = acc.aggregate_body()
+        assert rows[0]["device_name"] == ""
 
 
 # -------------------------------------------------------

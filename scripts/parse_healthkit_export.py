@@ -60,7 +60,7 @@ WORKOUTS_HEADERS = [
     "calories_burned", "avg_heart_rate", "distance_mi", "source_app",
 ]
 
-BODY_HEADERS = ["date", "weight_lbs", "body_fat_pct", "bmi", "lean_body_mass_lbs"]
+BODY_HEADERS = ["date", "weight_lbs", "body_fat_pct", "bmi", "lean_body_mass_lbs", "device_name"]
 
 MINDFULNESS_HEADERS = ["date", "duration_minutes", "session_count"]
 
@@ -150,13 +150,15 @@ class HealthKitAccumulator:
     def add_workout(self, workout_dict):
         self.workouts.append(workout_dict)
 
-    def add_body(self, record_type, date, value, unit):
+    def add_body(self, record_type, date, value, unit, source_name=""):
         if not date or value is None:
             return
         field = BODY_TYPES.get(record_type)
         if not field:
             return
         self.body[date][field] = (value, unit)
+        if source_name:
+            self.body[date]["_device_name"] = source_name
 
     def add_mindfulness(self, date, duration_minutes):
         if date and duration_minutes is not None:
@@ -222,6 +224,9 @@ class HealthKitAccumulator:
             else:
                 row["lean_body_mass_lbs"] = ""
 
+            # Device name (last-of-day wins, same as other body fields)
+            row["device_name"] = data.get("_device_name", "")
+
             rows.append(row)
         return rows
 
@@ -264,7 +269,7 @@ def parse_export(input_path):
 
             # Body measurements
             elif record_type in BODY_TYPES and value is not None:
-                acc.add_body(record_type, date, value, unit)
+                acc.add_body(record_type, date, value, unit, elem.get("sourceName", ""))
 
             elem.clear()
 
@@ -355,7 +360,7 @@ def parse_export_with_mindfulness(input_path):
 
             # Body measurements
             elif record_type in BODY_TYPES and value is not None:
-                acc.add_body(record_type, date, value, unit)
+                acc.add_body(record_type, date, value, unit, elem.get("sourceName", ""))
 
             # Mindfulness sessions
             elif record_type == "HKCategoryTypeIdentifierMindfulSession":

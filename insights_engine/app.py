@@ -88,7 +88,7 @@ with st.sidebar:
     st.title("🧬 Bio Insights")
     page = st.radio(
         "Navigate",
-        ["💬 Ask", "📊 Insights", "📋 Weekly Report", "🔮 What-If"],
+        ["💬 Ask", "📊 Insights", "📋 Weekly Report", "🔮 What-If", "📤 Export"],
         label_visibility="collapsed",
     )
     st.divider()
@@ -115,10 +115,36 @@ with st.sidebar:
     except Exception:
         st.caption("Metrics unavailable")
 
+    # HealthKit vitals summary
+    try:
+        hk_df = athena.execute_query("""
+            SELECT
+                ROUND(AVG(resting_heart_rate_bpm), 0) AS avg_rhr,
+                ROUND(AVG(hrv_ms), 0) AS avg_hrv,
+                ROUND(AVG(vo2_max), 1) AS avg_vo2
+            FROM bio_gold.daily_readiness_performance
+            WHERE resting_heart_rate_bpm IS NOT NULL
+              AND COALESCE(
+                    TRY(CAST(date AS date)),
+                    TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
+                  ) >= CURRENT_DATE - INTERVAL '7' DAY
+        """)
+        if not hk_df.empty and hk_df.iloc[0]["avg_rhr"] is not None:
+            hk_row = hk_df.iloc[0]
+            st.divider()
+            st.caption("Apple Health (7-day)")
+            c1, c2 = st.columns(2)
+            c1.metric("Resting HR", f"{hk_row['avg_rhr']:.0f} bpm")
+            c2.metric("HRV", f"{hk_row['avg_hrv']:.0f} ms")
+            if hk_row.get("avg_vo2") and float(hk_row["avg_vo2"]) > 0:
+                st.metric("VO2 Max", f"{hk_row['avg_vo2']:.1f}")
+    except Exception:
+        pass
+
     st.divider()
     st.toggle("Dark Mode", value=st.session_state.dark_mode, key="dark_mode_toggle",
               on_change=lambda: st.session_state.update(dark_mode=not st.session_state.dark_mode))
-    st.caption("Data: Oura Ring + Peloton")
+    st.caption("Data: Oura Ring + Peloton + Apple Health")
     st.caption("Powered by Claude + Athena")
 
 
@@ -238,6 +264,7 @@ elif page == "📊 Insights":
         from insights_engine.insights.readiness_trend import ReadinessTrendAnalyzer
         from insights_engine.insights.anomaly_detection import AnomalyDetectionAnalyzer
         from insights_engine.insights.timing_correlation import TimingCorrelationAnalyzer
+        from insights_engine.insights.training_load import TrainingLoadAnalyzer
 
         _athena = get_athena()
         results = []
@@ -247,6 +274,7 @@ elif page == "📊 Insights":
             ReadinessTrendAnalyzer,
             AnomalyDetectionAnalyzer,
             TimingCorrelationAnalyzer,
+            TrainingLoadAnalyzer,
         ]:
             try:
                 results.append(Cls(_athena).analyze())
@@ -269,6 +297,132 @@ elif page == "📊 Insights":
                     st.caption(f"⚠️ {caveat}")
 
         st.divider()
+
+    # ── HealthKit Vitals Trends ──────────────────────────────────────
+    st.subheader("Apple Health — Vitals Trends")
+    st.caption("Resting heart rate, HRV, and VO2 max from Apple Health (last 90 days).")
+
+    @st.cache_data(ttl=3600, show_spinner="Loading HealthKit vitals...")
+    def load_hk_vitals():
+        _athena = get_athena()
+        return _athena.execute_query("""
+            SELECT
+                date,
+                resting_heart_rate_bpm,
+                hrv_ms,
+                vo2_max,
+                blood_oxygen_pct,
+                weight_lbs,
+                readiness_score,
+                sleep_score
+            FROM bio_gold.daily_readiness_performance
+            WHERE resting_heart_rate_bpm IS NOT NULL
+              AND COALESCE(
+                    TRY(CAST(date AS date)),
+                    TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
+                  ) >= CURRENT_DATE - INTERVAL '90' DAY
+            ORDER BY date
+        """)
+
+    hk_vitals = load_hk_vitals()
+
+    if not hk_vitals.empty:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+
+        hk_vitals["date"] = pd.to_datetime(hk_vitals["date"])
+        for col in ["resting_heart_rate_bpm", "hrv_ms", "vo2_max", "readiness_score"]:
+            hk_vitals[col] = pd.to_numeric(hk_vitals[col], errors="coerce")
+
+        fig = make_subplots(
+            rows=3, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.06,
+            subplot_titles=("Resting Heart Rate (bpm)", "Heart Rate Variability (ms)", "VO2 Max"),
+        )
+
+        # Resting HR
+        fig.add_trace(
+            go.Scatter(
+                x=hk_vitals["date"], y=hk_vitals["resting_heart_rate_bpm"],
+                mode="lines+markers", name="Resting HR",
+                line=dict(color=_palette["danger"], width=2),
+                marker=dict(size=4),
+            ), row=1, col=1,
+        )
+
+        # HRV
+        fig.add_trace(
+            go.Scatter(
+                x=hk_vitals["date"], y=hk_vitals["hrv_ms"],
+                mode="lines+markers", name="HRV",
+                line=dict(color=_palette["accent"], width=2),
+                marker=dict(size=4),
+            ), row=2, col=1,
+        )
+
+        # VO2 Max
+        vo2_data = hk_vitals[hk_vitals["vo2_max"].notna() & (hk_vitals["vo2_max"] > 0)]
+        if not vo2_data.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=vo2_data["date"], y=vo2_data["vo2_max"],
+                    mode="lines+markers", name="VO2 Max",
+                    line=dict(color=_palette["success"], width=2),
+                    marker=dict(size=4),
+                ), row=3, col=1,
+            )
+
+        fig.update_layout(
+            height=650,
+            template="plotly_dark" if _dark else "plotly_white",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            showlegend=False,
+            margin=dict(l=60, r=20, t=40, b=20),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # HR vs Readiness correlation
+        corr_data = hk_vitals.dropna(subset=["resting_heart_rate_bpm", "readiness_score"])
+        if len(corr_data) >= 7:
+            corr = corr_data["resting_heart_rate_bpm"].corr(corr_data["readiness_score"])
+            direction = "lower" if corr < 0 else "higher"
+            st.markdown(
+                f"**Resting HR vs Readiness correlation:** r = {corr:.2f} — "
+                f"{direction} resting heart rate tends to {'improve' if corr < 0 else 'coincide with lower'} readiness scores."
+            )
+
+        # Body composition if available (Hume Health pod baseline: Feb 19, 2026)
+        body_data = hk_vitals[
+            (hk_vitals["weight_lbs"].notna())
+            & (hk_vitals["date"] >= pd.Timestamp("2026-02-19"))
+        ]
+        if not body_data.empty and len(body_data) >= 3:
+            body_data["weight_lbs"] = pd.to_numeric(body_data["weight_lbs"], errors="coerce")
+            st.divider()
+            st.subheader("Apple Health — Body Composition")
+            st.caption("Baseline: Hume Health pod (Feb 19, 2026). Earlier scale data excluded due to calibration difference.")
+            fig_body = go.Figure()
+            fig_body.add_trace(go.Scatter(
+                x=body_data["date"], y=body_data["weight_lbs"],
+                mode="lines+markers", name="Weight (lbs)",
+                line=dict(color=_palette["primary"], width=2),
+                marker=dict(size=4),
+            ))
+            fig_body.update_layout(
+                height=300,
+                template="plotly_dark" if _dark else "plotly_white",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                yaxis_title="Weight (lbs)",
+                margin=dict(l=60, r=20, t=20, b=20),
+            )
+            st.plotly_chart(fig_body, use_container_width=True)
+
+        st.divider()
+    else:
+        st.info("No Apple Health vitals data available yet.")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -511,3 +665,71 @@ elif page == "🔮 What-If":
             st.session_state.whatif_scenarios = []
             st.session_state.pop("whatif_latest", None)
             st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PAGE 5: FHIR EXPORT
+# ══════════════════════════════════════════════════════════════════════════
+elif page == "📤 Export":
+    st.header("FHIR R4 Bundle Export")
+    st.caption(
+        "Export your health data as an HL7 FHIR R4 Bundle (JSON) for sharing with healthcare providers."
+    )
+
+    from datetime import date, timedelta
+    from insights_engine.fhir.bundle_builder import FHIRBundleBuilder
+
+    col1, col2 = st.columns(2)
+    with col1:
+        export_start = st.date_input(
+            "Start Date",
+            value=date.today() - timedelta(days=30),
+        )
+    with col2:
+        export_end = st.date_input(
+            "End Date",
+            value=date.today(),
+        )
+
+    if export_start > export_end:
+        st.error("Start date must be before end date.")
+    else:
+        if st.button("Generate FHIR Bundle", type="primary"):
+            with st.spinner("Building FHIR Bundle..."):
+                try:
+                    builder = FHIRBundleBuilder(get_athena())
+                    bundle = builder.build(export_start, export_end)
+                    bundle_json = __import__("json").dumps(bundle, indent=2)
+
+                    # Resource count summary
+                    resource_types = {}
+                    for entry in bundle.get("entry", []):
+                        rt = entry["resource"]["resourceType"]
+                        resource_types[rt] = resource_types.get(rt, 0) + 1
+
+                    st.success(
+                        f"Bundle generated: {bundle['total']} resources "
+                        f"({export_start} to {export_end})"
+                    )
+
+                    # Summary metrics
+                    cols = st.columns(len(resource_types))
+                    for i, (rt, count) in enumerate(sorted(resource_types.items())):
+                        cols[i].metric(rt, count)
+
+                    # JSON preview
+                    with st.expander("Preview JSON", expanded=False):
+                        st.code(bundle_json[:5000] + ("\n..." if len(bundle_json) > 5000 else ""), language="json")
+
+                    # Download button
+                    st.download_button(
+                        label="Download FHIR Bundle (.json)",
+                        data=bundle_json,
+                        file_name=f"bio-lakehouse-fhir-bundle-{export_start}-to-{export_end}.json",
+                        mime="application/fhir+json",
+                    )
+
+                    st.session_state["last_fhir_bundle"] = bundle_json
+
+                except Exception as e:
+                    st.error(f"Bundle generation failed: {e}")

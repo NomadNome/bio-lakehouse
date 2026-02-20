@@ -38,7 +38,7 @@ EXPECTED_HEADERS = {
     ],
     "healthkit/daily_vitals": ["date", "resting_heart_rate_bpm"],
     "healthkit/workouts": ["date", "workout_type", "duration_minutes"],
-    "healthkit/body": ["date", "weight_lbs"],
+    "healthkit/body": ["date", "weight_lbs", "device_name"],
     "healthkit/mindfulness": ["date", "duration_minutes"],
 }
 

@@ -150,6 +150,7 @@ if hk_body_df is not None:
         F.col("body_fat_pct"),
         F.col("bmi"),
         F.col("lean_body_mass_lbs"),
+        F.col("device_name"),
     )
 else:
     hk_body_daily = None
