@@ -2,7 +2,7 @@
 
 > **Production AI infrastructure blueprint: Serverless lakehouse (AWS) + Claude integration with data governance, security, and operational monitoring. Demonstrates enterprise AI deployment patterns on real biometric data.**
 
-A fully operational health-analytics system that demonstrates end-to-end data engineering: from ingestion through ETL to AI-powered analytics. Built on AWS using medallion architecture (Bronze/Silver/Gold), this platform processes real biometric data from Oura Ring and Peloton, exposes it via Athena SQL, and delivers insights through natural language queries and automated reports.
+A fully operational health-analytics system that demonstrates end-to-end data engineering: from ingestion through ETL to AI-powered analytics. Built on AWS using medallion architecture (Bronze/Silver/Gold), this platform processes real biometric data from Oura Ring, Apple Healthkit (Hume Body Pod & Apple Watch Series 9) and Peloton, exposes it via Athena SQL, and delivers insights through natural language queries and automated reports.
 
 ## Why This Matters
 
