@@ -393,32 +393,161 @@ elif page == "📊 Insights":
                 f"{direction} resting heart rate tends to {'improve' if corr < 0 else 'coincide with lower'} readiness scores."
             )
 
-        # Body composition if available (Hume Health pod baseline: Feb 19, 2026)
-        body_data = hk_vitals[
-            (hk_vitals["weight_lbs"].notna())
-            & (hk_vitals["date"] >= pd.Timestamp("2026-02-19"))
-        ]
+        # ── Body Composition Dashboard (Hume Health pod baseline: Feb 19, 2026) ──
+        @st.cache_data(ttl=3600, show_spinner="Loading body composition...")
+        def load_body_comp():
+            _athena = get_athena()
+            return _athena.execute_query("""
+                SELECT date, weight_lbs, body_fat_pct, bmi, lean_body_mass_lbs
+                FROM bio_gold.daily_readiness_performance
+                WHERE COALESCE(TRY(CAST(date AS date)), TRY(date_parse(date, '%Y-%m-%d %H:%i:%s')))
+                      >= DATE '2026-02-19'
+                  AND (weight_lbs IS NOT NULL OR body_fat_pct IS NOT NULL)
+                ORDER BY date
+            """)
+
+        body_data = load_body_comp()
+
         if not body_data.empty and len(body_data) >= 3:
-            body_data["weight_lbs"] = pd.to_numeric(body_data["weight_lbs"], errors="coerce")
+            body_data["date"] = pd.to_datetime(body_data["date"])
+            for col in ["weight_lbs", "body_fat_pct", "bmi", "lean_body_mass_lbs"]:
+                body_data[col] = pd.to_numeric(body_data[col], errors="coerce")
+
             st.divider()
             st.subheader("Apple Health — Body Composition")
             st.caption("Baseline: Hume Health pod (Feb 19, 2026). Earlier scale data excluded due to calibration difference.")
-            fig_body = go.Figure()
-            fig_body.add_trace(go.Scatter(
-                x=body_data["date"], y=body_data["weight_lbs"],
-                mode="lines+markers", name="Weight (lbs)",
-                line=dict(color=_palette["primary"], width=2),
-                marker=dict(size=4),
-            ))
-            fig_body.update_layout(
-                height=300,
-                template="plotly_dark" if _dark else "plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                yaxis_title="Weight (lbs)",
-                margin=dict(l=60, r=20, t=20, b=20),
+
+            # ── Summary metrics with deltas ──
+            def _first_last(series):
+                valid = series.dropna()
+                if valid.empty:
+                    return None, None, None
+                return valid.iloc[-1], valid.iloc[0], valid.iloc[-1] - valid.iloc[0]
+
+            w_latest, w_first, w_delta = _first_last(body_data["weight_lbs"])
+            bf_latest, bf_first, bf_delta = _first_last(body_data["body_fat_pct"])
+            lm_latest, lm_first, lm_delta = _first_last(body_data["lean_body_mass_lbs"])
+            bmi_latest, bmi_first, bmi_delta = _first_last(body_data["bmi"])
+
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            if w_latest is not None:
+                mc1.metric("Weight", f"{w_latest:.1f} lbs", delta=f"{w_delta:+.1f} lbs", delta_color="inverse")
+            if bf_latest is not None:
+                mc2.metric("Body Fat", f"{bf_latest:.1f}%", delta=f"{bf_delta:+.1f}%", delta_color="inverse")
+            if lm_latest is not None:
+                mc3.metric("Lean Mass", f"{lm_latest:.1f} lbs", delta=f"{lm_delta:+.1f} lbs", delta_color="normal")
+            if bmi_latest is not None:
+                mc4.metric("BMI", f"{bmi_latest:.1f}", delta=f"{bmi_delta:+.1f}", delta_color="inverse")
+
+            # ── Multi-metric subplot chart ──
+            has_weight = body_data["weight_lbs"].notna().any()
+            has_bf = body_data["body_fat_pct"].notna().any()
+            has_lm = body_data["lean_body_mass_lbs"].notna().any()
+            row_count = sum([has_weight, has_bf, has_lm])
+
+            if row_count > 0:
+                titles = []
+                if has_weight:
+                    titles.append("Weight (lbs)")
+                if has_bf:
+                    titles.append("Body Fat %")
+                if has_lm:
+                    titles.append("Lean Body Mass (lbs)")
+
+                fig_body = make_subplots(
+                    rows=row_count, cols=1,
+                    shared_xaxes=True,
+                    vertical_spacing=0.08,
+                    subplot_titles=titles,
+                )
+
+                current_row = 1
+                if has_weight:
+                    w_series = body_data.dropna(subset=["weight_lbs"])
+                    fig_body.add_trace(go.Scatter(
+                        x=w_series["date"], y=w_series["weight_lbs"],
+                        mode="lines+markers", name="Weight",
+                        line=dict(color=_palette["primary"], width=2),
+                        marker=dict(size=4),
+                    ), row=current_row, col=1)
+                    current_row += 1
+
+                if has_bf:
+                    bf_series = body_data.dropna(subset=["body_fat_pct"])
+                    fig_body.add_trace(go.Scatter(
+                        x=bf_series["date"], y=bf_series["body_fat_pct"],
+                        mode="lines+markers", name="Body Fat %",
+                        line=dict(color=_palette["danger"], width=2),
+                        marker=dict(size=4),
+                    ), row=current_row, col=1)
+                    current_row += 1
+
+                if has_lm:
+                    lm_series = body_data.dropna(subset=["lean_body_mass_lbs"])
+                    fig_body.add_trace(go.Scatter(
+                        x=lm_series["date"], y=lm_series["lean_body_mass_lbs"],
+                        mode="lines+markers", name="Lean Mass",
+                        line=dict(color=_palette["success"], width=2),
+                        marker=dict(size=4),
+                    ), row=current_row, col=1)
+
+                fig_body.update_layout(
+                    height=250 * row_count,
+                    template="plotly_dark" if _dark else "plotly_white",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    showlegend=False,
+                    margin=dict(l=60, r=20, t=40, b=20),
+                )
+                st.plotly_chart(fig_body, use_container_width=True)
+
+            # ── Body comp vs. performance correlation ──
+            if has_weight or has_bf:
+                merged = body_data.merge(
+                    hk_vitals[["date", "readiness_score"]].dropna(subset=["readiness_score"]),
+                    on="date", how="inner",
+                )
+                if len(merged) >= 7:
+                    st.markdown("**Body Composition vs. Readiness**")
+                    corr_cols = st.columns(2)
+                    if has_weight:
+                        w_corr_data = merged.dropna(subset=["weight_lbs", "readiness_score"])
+                        if len(w_corr_data) >= 7:
+                            r_w = w_corr_data["weight_lbs"].corr(w_corr_data["readiness_score"])
+                            interp_w = "lower weight days tend to coincide with higher readiness" if r_w < 0 else "weight shows little negative association with readiness"
+                            corr_cols[0].markdown(f"Weight vs Readiness: **r = {r_w:.2f}** — {interp_w}")
+                    if has_bf:
+                        bf_corr_data = merged.dropna(subset=["body_fat_pct", "readiness_score"])
+                        if len(bf_corr_data) >= 7:
+                            r_bf = bf_corr_data["body_fat_pct"].corr(bf_corr_data["readiness_score"])
+                            interp_bf = "lower body fat tends to coincide with higher readiness" if r_bf < 0 else "body fat shows little negative association with readiness"
+                            corr_cols[1].markdown(f"Body Fat vs Readiness: **r = {r_bf:.2f}** — {interp_bf}")
+
+            # ── Weekly trend table ──
+            body_data["iso_week"] = body_data["date"].dt.isocalendar().week.astype(int)
+            body_data["iso_year"] = body_data["date"].dt.isocalendar().year.astype(int)
+            weekly = body_data.groupby(["iso_year", "iso_week"]).agg(
+                avg_weight=("weight_lbs", "mean"),
+                avg_body_fat=("body_fat_pct", "mean"),
+                avg_lean_mass=("lean_body_mass_lbs", "mean"),
+            ).reset_index()
+            weekly["week_label"] = weekly["iso_year"].astype(str) + "-W" + weekly["iso_week"].astype(str).str.zfill(2)
+            weekly["weight_change"] = weekly["avg_weight"].diff()
+
+            display_weekly = weekly[["week_label", "avg_weight", "avg_body_fat", "avg_lean_mass", "weight_change"]].copy()
+            display_weekly.columns = ["Week", "Avg Weight (lbs)", "Avg Body Fat %", "Avg Lean Mass (lbs)", "Weight Change (lbs)"]
+
+            st.markdown("**Weekly Trends**")
+            st.dataframe(
+                display_weekly.style.format({
+                    "Avg Weight (lbs)": "{:.1f}",
+                    "Avg Body Fat %": "{:.1f}",
+                    "Avg Lean Mass (lbs)": "{:.1f}",
+                    "Weight Change (lbs)": "{:+.1f}",
+                }, na_rep="—"),
+                use_container_width=True,
+                hide_index=True,
             )
-            st.plotly_chart(fig_body, use_container_width=True)
 
         st.divider()
     else:
