@@ -96,8 +96,8 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
       Name: !Sub '${ProjectPrefix}-oura-daily-ingest'
-      Description: Trigger Oura API ingestion daily at 6AM UTC
-      ScheduleExpression: 'cron(0 6 * * ? *)'
+      Description: Trigger Oura API ingestion daily at 5:50 AM UTC (10 min before normalizer window)
+      ScheduleExpression: 'cron(50 5 * * ? *)'
       State: ENABLED
       Targets:
         - Id: OuraIngestTarget
