@@ -45,9 +45,30 @@ SILVER_BUCKET = args["silver_bucket"]
 
 print("Processing Peloton workout data...")
 
-# Read all Peloton workout CSVs from Bronze
-df = spark.read.option("header", "true").option("inferSchema", "true").csv(
-    f"s3://{BRONZE_BUCKET}/peloton/workouts/"
+# Read Peloton workout CSVs from Bronze.
+# The Bronze bucket may contain both raw full-export CSVs (top-level, title-case
+# headers like "Workout Timestamp") and old Hive-partitioned CSVs (year=/month=
+# paths with pre-processed snake_case headers). These have incompatible schemas,
+# so we read only the top-level raw CSVs (KnownasNoma_workouts_*.csv) which are
+# complete exports containing all historical workouts.
+# List top-level Peloton CSVs and read only the latest (full export = superset)
+import boto3 as _boto3
+_s3 = _boto3.client("s3")
+_resp = _s3.list_objects_v2(
+    Bucket=BRONZE_BUCKET, Prefix="peloton/workouts/KnownasNoma_"
+)
+_csv_keys = sorted(
+    [obj["Key"] for obj in _resp.get("Contents", []) if obj["Key"].endswith(".csv")],
+    key=lambda k: _resp["Contents"][[o["Key"] for o in _resp["Contents"]].index(k)]["LastModified"],
+)
+_latest_key = _csv_keys[-1] if _csv_keys else None
+print(f"Reading latest Peloton CSV: {_latest_key}")
+
+df = (
+    spark.read
+    .option("header", "true")
+    .option("inferSchema", "false")
+    .csv(f"s3://{BRONZE_BUCKET}/{_latest_key}")
 )
 
 if df.rdd.isEmpty():
@@ -55,11 +76,33 @@ if df.rdd.isEmpty():
     job.commit()
     sys.exit(0)
 
+# Normalize column names: "Workout Timestamp" → "workout_timestamp"
+# Raw Peloton CSVs use title case; previously processed ones are already snake_case
+import re
+for col in df.columns:
+    snake = re.sub(r"[.\s/()]+", "_", col.strip()).lower().strip("_")
+    if snake != col:
+        df = df.withColumnRenamed(col, snake)
+print(f"Columns after normalization: {df.columns}")
+
 validate_schema(
     df,
-    ["workout_date", "fitness_discipline", "calories_burned"],
+    ["workout_timestamp", "fitness_discipline", "calories_burned"],
     "peloton_workouts",
 )
+
+# Parse workout_timestamp into workout_date and workout_time.
+# Raw format: "2026-02-21 07:25 (-05)" or "2026-02-21 07:25 (EST)"
+# Extract date (first 10 chars) and time (chars 11-16)
+df = df.withColumn(
+    "workout_date",
+    F.to_timestamp(F.substring(F.col("workout_timestamp"), 1, 10), "yyyy-MM-dd"),
+)
+df = df.withColumn(
+    "workout_time",
+    F.trim(F.substring(F.col("workout_timestamp"), 12, 5)),
+)
+print(f"Sample workout_date: {df.select('workout_date').first()[0]}")
 
 # Cast numeric columns
 int_cols = ["total_output", "avg_watts", "avg_cadence_rpm", "calories_burned",
@@ -81,16 +124,18 @@ if "avg_resistance" in df.columns:
         F.regexp_extract(F.col("avg_resistance"), r"(\d+)", 1).cast("integer"),
     )
 
-# Build UTC timestamp from workout_date + workout_time + utc_offset
+# Build UTC timestamp from workout_date + workout_time
+# Use date_format on the timestamp workout_date to get "yyyy-MM-dd" string,
+# then concatenate with workout_time for proper parsing
 df = df.withColumn(
     "workout_timestamp_utc",
     F.when(
         F.col("workout_time").isNotNull() & (F.col("workout_time") != ""),
         F.to_timestamp(
-            F.concat_ws(" ", F.col("workout_date"), F.col("workout_time")),
+            F.concat_ws(" ", F.date_format("workout_date", "yyyy-MM-dd"), F.col("workout_time")),
             "yyyy-MM-dd HH:mm",
         ),
-    ).otherwise(F.to_date(F.col("workout_date"), "yyyy-MM-dd").cast("timestamp")),
+    ).otherwise(F.col("workout_date")),
 )
 
 # Categorize workout types
@@ -103,10 +148,10 @@ df = calculate_hr_zones(df)
 # Calculate total output in kJ (Peloton output is in kJ already)
 df = df.withColumn("total_output_kj", F.col("total_output").cast("double"))
 
-# Partitioning columns
+# Partitioning columns (extract from timestamp)
 df = (
-    df.withColumn("year", F.substring("workout_date", 1, 4))
-    .withColumn("month", F.substring("workout_date", 6, 2))
+    df.withColumn("year", F.date_format("workout_date", "yyyy"))
+    .withColumn("month", F.date_format("workout_date", "MM"))
 )
 
 # Write to Silver

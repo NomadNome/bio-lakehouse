@@ -35,7 +35,7 @@ def _load_feature_cols() -> list[str]:
     # Fallback to legacy hardcoded features
     return [
         "resting_hr", "ctl", "tsb", "tss",
-        "sleep_score_3d_avg", "sleep_rem_pct",
+        "sleep_score_3d_avg", "rem_sleep_score",
         "readiness_7d_avg", "readiness_3d_slope",
     ]
 

@@ -305,12 +305,14 @@ elif page == "📊 Insights":
         from insights_engine.insights.anomaly_detection import AnomalyDetectionAnalyzer
         from insights_engine.insights.timing_correlation import TimingCorrelationAnalyzer
         from insights_engine.insights.training_load import TrainingLoadAnalyzer
+        from insights_engine.insights.recovery_windows import RecoveryWindowAnalyzer
 
         _athena = get_athena()
         results = []
         for Cls in [
             SleepReadinessAnalyzer,
             WorkoutRecoveryAnalyzer,
+            RecoveryWindowAnalyzer,
             ReadinessTrendAnalyzer,
             AnomalyDetectionAnalyzer,
             TimingCorrelationAnalyzer,
@@ -592,6 +594,159 @@ elif page == "📊 Insights":
         st.divider()
     else:
         st.info("No Apple Health vitals data available yet.")
+
+    # ── Sleep Debt Tracker ──────────────────────────────────────────────
+    st.subheader("Sleep Debt Tracker")
+    st.caption("Rolling sleep deficit relative to your 14-day baseline.")
+
+    @st.cache_data(ttl=3600, show_spinner="Loading sleep debt data...")
+    def load_sleep_debt():
+        _athena = get_athena()
+        return _athena.execute_query("""
+            SELECT date, sleep_score, sleep_baseline_14d, sleep_deficit_daily, sleep_debt_7d
+            FROM bio_gold_gold.feature_readiness_daily
+            WHERE sleep_baseline_14d IS NOT NULL
+            ORDER BY date
+        """)
+
+    try:
+        sleep_debt_df = load_sleep_debt()
+        if not sleep_debt_df.empty:
+            import plotly.graph_objects as go
+            from plotly.subplots import make_subplots
+
+            sleep_debt_df["date"] = pd.to_datetime(sleep_debt_df["date"])
+            for col in ["sleep_score", "sleep_baseline_14d", "sleep_deficit_daily", "sleep_debt_7d"]:
+                sleep_debt_df[col] = pd.to_numeric(sleep_debt_df[col], errors="coerce")
+
+            # Show last 60 days
+            sleep_debt_df = sleep_debt_df.tail(60)
+
+            fig_sd = make_subplots(
+                rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
+                subplot_titles=("Sleep Score vs 14-Day Baseline", "7-Day Rolling Sleep Debt"),
+            )
+
+            fig_sd.add_trace(go.Scatter(
+                x=sleep_debt_df["date"], y=sleep_debt_df["sleep_score"],
+                name="Sleep Score", mode="lines+markers",
+                line=dict(color=_palette["primary"], width=2), marker=dict(size=3),
+            ), row=1, col=1)
+            fig_sd.add_trace(go.Scatter(
+                x=sleep_debt_df["date"], y=sleep_debt_df["sleep_baseline_14d"],
+                name="14-Day Baseline", mode="lines",
+                line=dict(color=_palette["text_muted"], width=2, dash="dash"),
+            ), row=1, col=1)
+
+            colors_debt = [_palette["danger"] if v < 0 else _palette["success"]
+                           for v in sleep_debt_df["sleep_debt_7d"]]
+            fig_sd.add_trace(go.Bar(
+                x=sleep_debt_df["date"], y=sleep_debt_df["sleep_debt_7d"],
+                name="7-Day Sleep Debt", marker_color=colors_debt,
+            ), row=2, col=1)
+            fig_sd.add_hline(y=0, row=2, col=1, line_dash="dash", line_color="gray", opacity=0.5)
+
+            fig_sd.update_layout(
+                height=500, template="plotly_dark" if _dark else "plotly_white",
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                showlegend=True, legend=dict(orientation="h", y=1.12),
+                margin=dict(l=50, r=20, t=60, b=20),
+            )
+            st.plotly_chart(fig_sd, use_container_width=True)
+
+            # Current status
+            latest = sleep_debt_df.iloc[-1]
+            debt_val = latest["sleep_debt_7d"]
+            if debt_val < -20:
+                st.error(f"Significant sleep debt: {debt_val:.0f} points below baseline over the past week.")
+            elif debt_val < -10:
+                st.warning(f"Moderate sleep debt: {debt_val:.0f} points below baseline over the past week.")
+            elif debt_val >= 0:
+                st.success(f"Sleep surplus: +{debt_val:.0f} points above baseline. Well recovered!")
+            else:
+                st.info(f"Mild sleep deficit: {debt_val:.0f} points. Within normal range.")
+        else:
+            st.info("No sleep debt data available yet. Run dbt to materialize the feature table.")
+    except Exception as e:
+        st.warning(f"Sleep debt data not available: {e}")
+
+    st.divider()
+
+    # ── HRV Velocity Flags ──────────────────────────────────────────────
+    st.subheader("HRV Velocity")
+    st.caption("2-day HRV change rate — rising/falling/stable flags for early recovery signals.")
+
+    @st.cache_data(ttl=3600, show_spinner="Loading HRV velocity data...")
+    def load_hrv_velocity():
+        _athena = get_athena()
+        return _athena.execute_query("""
+            SELECT date, hrv_ms, hrv_2day_change, hrv_velocity_flag
+            FROM bio_gold_gold.feature_readiness_daily
+            WHERE hrv_2day_change IS NOT NULL
+            ORDER BY date
+        """)
+
+    try:
+        hrv_vel_df = load_hrv_velocity()
+        if not hrv_vel_df.empty:
+            import plotly.graph_objects as go
+
+            hrv_vel_df["date"] = pd.to_datetime(hrv_vel_df["date"])
+            for col in ["hrv_ms", "hrv_2day_change"]:
+                hrv_vel_df[col] = pd.to_numeric(hrv_vel_df[col], errors="coerce")
+
+            # Show last 60 days
+            hrv_vel_df = hrv_vel_df.tail(60)
+
+            flag_colors = {
+                "rising": _palette["success"],
+                "falling": _palette["danger"],
+                "stable": _palette["text_muted"],
+            }
+            marker_colors = [flag_colors.get(f, _palette["text_muted"]) for f in hrv_vel_df["hrv_velocity_flag"]]
+
+            fig_hrv = go.Figure()
+            fig_hrv.add_trace(go.Bar(
+                x=hrv_vel_df["date"], y=hrv_vel_df["hrv_2day_change"],
+                marker_color=marker_colors, name="HRV 2-Day Change",
+            ))
+            fig_hrv.add_hline(y=10, line_dash="dot", line_color=_palette["success"], opacity=0.5,
+                              annotation_text="Rising threshold (+10ms)")
+            fig_hrv.add_hline(y=-10, line_dash="dot", line_color=_palette["danger"], opacity=0.5,
+                              annotation_text="Falling threshold (-10ms)")
+            fig_hrv.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.3)
+
+            fig_hrv.update_layout(
+                height=350, template="plotly_dark" if _dark else "plotly_white",
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                title="HRV 2-Day Velocity (ms change)",
+                xaxis_title="Date", yaxis_title="HRV Change (ms)",
+                showlegend=False,
+                margin=dict(l=50, r=20, t=60, b=20),
+            )
+            st.plotly_chart(fig_hrv, use_container_width=True)
+
+            # Flag summary
+            recent_flags = hrv_vel_df.tail(7)["hrv_velocity_flag"]
+            rising = (recent_flags == "rising").sum()
+            falling = (recent_flags == "falling").sum()
+            stable = (recent_flags == "stable").sum()
+
+            cols_hrv = st.columns(3)
+            cols_hrv[0].metric("Rising (7d)", f"{rising} days", delta=None)
+            cols_hrv[1].metric("Stable (7d)", f"{stable} days", delta=None)
+            cols_hrv[2].metric("Falling (7d)", f"{falling} days", delta=None)
+
+            if falling >= 3:
+                st.warning("HRV has been falling frequently — consider recovery-focused activities.")
+            elif rising >= 3:
+                st.success("HRV trending upward — your body is adapting well.")
+        else:
+            st.info("No HRV velocity data available yet. Run dbt to materialize the feature table.")
+    except Exception as e:
+        st.warning(f"HRV velocity data not available: {e}")
+
+    st.divider()
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1088,9 +1243,11 @@ elif page == "🎯 Predictions":
                         cv_details = _metrics.get("cv_details", [])
                         if cv_details:
                             lc_df = pd.DataFrame(cv_details)
+                            # Handle both old format (train_end) and new format (n_train)
+                            x_col = "n_train" if "n_train" in lc_df.columns else "train_end"
                             fig_lc = go.Figure()
                             fig_lc.add_trace(go.Scatter(
-                                x=lc_df["n_train"], y=lc_df["mae"],
+                                x=lc_df[x_col], y=lc_df["mae"],
                                 mode="lines+markers", name="MAE",
                                 line=dict(color=_palette["accent"], width=2),
                                 marker=dict(size=6),

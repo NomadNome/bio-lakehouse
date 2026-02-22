@@ -230,6 +230,16 @@ def lambda_handler(event, context):
             results.append({"key": key, "source": "batch", "batch": batch_result})
             continue
 
+        # Skip individual files inside Hive-partitioned batch paths.
+        # These are uploaded in bulk by batch_upload.sh — the manifest
+        # (handled above) is responsible for triggering the Glue job once.
+        # Without this guard, thousands of per-file Lambda invocations
+        # cause Glue API throttling and can block unrelated triggers.
+        if "year=" in key:
+            print(f"Skipping Hive-partitioned file (batch upload): {key}")
+            results.append({"key": key, "source": "batch_file", "skipped": True})
+            continue
+
         # Detect source type from path
         source = detect_source(key)
         print(f"Detected source: {source}")
