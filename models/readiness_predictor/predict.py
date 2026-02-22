@@ -1,8 +1,8 @@
 """
-Next-Day Readiness Predictor — Inference Script
+Next-Day Readiness Predictor — Inference Script (Phase 7)
 
-Loads the trained model and predicts tomorrow's readiness score
-from the most recent day's feature data.
+Loads the trained model (MLflow registry or local joblib) and predicts
+tomorrow's readiness score from the most recent day's feature data.
 
 Usage:
     python -m models.readiness_predictor.predict
@@ -18,12 +18,45 @@ import joblib
 import numpy as np
 import pandas as pd
 
-# Ensure project root is on path before importing sibling module
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from models.readiness_predictor.train import FEATURE_COLS, MODEL_PATH
-
 MODEL_DIR = Path(__file__).parent
+MODEL_PATH = MODEL_DIR / "model.joblib"
 METRICS_PATH = MODEL_DIR / "metrics.json"
+
+
+def _load_feature_cols() -> list[str]:
+    """Load feature column list from metrics.json."""
+    if METRICS_PATH.exists():
+        with open(METRICS_PATH) as f:
+            metrics = json.load(f)
+        cols = metrics.get("feature_cols")
+        if cols:
+            return cols
+
+    # Fallback to legacy hardcoded features
+    return [
+        "resting_hr", "ctl", "tsb", "tss",
+        "sleep_score_3d_avg", "sleep_rem_pct",
+        "readiness_7d_avg", "readiness_3d_slope",
+    ]
+
+
+def _load_model():
+    """Load model from MLflow registry first, then fall back to local joblib."""
+    try:
+        from models.readiness_predictor.mlflow_config import get_best_model_uri
+        import mlflow
+
+        uri = get_best_model_uri()
+        if uri:
+            return mlflow.sklearn.load_model(uri)
+    except (ImportError, Exception):
+        pass
+
+    if not MODEL_PATH.exists():
+        raise FileNotFoundError(
+            f"No trained model found at {MODEL_PATH}. Run train.py first."
+        )
+    return joblib.load(MODEL_PATH)
 
 
 def load_latest_features() -> pd.DataFrame:
@@ -43,30 +76,27 @@ def load_latest_features() -> pd.DataFrame:
 
 def predict_next_day() -> dict:
     """Predict tomorrow's readiness score."""
-    if not MODEL_PATH.exists():
-        raise FileNotFoundError(
-            f"No trained model found at {MODEL_PATH}. Run train.py first."
-        )
-
-    pipe = joblib.load(MODEL_PATH)
+    feature_cols = _load_feature_cols()
+    pipe = _load_model()
     df = load_latest_features()
 
     if df.empty:
         raise ValueError("No feature data available. Run dbt build first.")
 
     # Ensure numeric
-    for col in FEATURE_COLS:
+    for col in feature_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
     latest_date = df["date"].iloc[0]
-    X = df[FEATURE_COLS].values
+    X = df[feature_cols].values
 
     prediction = pipe.predict(X)[0]
     prediction = float(np.clip(prediction, 0, 100))
 
     # Load model metrics for confidence context
     confidence = {}
+    metrics = {}
     if METRICS_PATH.exists():
         with open(METRICS_PATH) as f:
             metrics = json.load(f)
@@ -77,14 +107,11 @@ def predict_next_day() -> dict:
             "cv_mae": mae,
             "cv_r2": metrics.get("cv_r2", 0),
             "n_training_samples": metrics.get("n_samples", 0),
+            "best_model": metrics.get("best_model", "unknown"),
+            "sample_size_warning": metrics.get("sample_size_warning", False),
         }
 
-    # Feature contributions (approximate via feature importances)
-    importances = {}
-    if METRICS_PATH.exists():
-        with open(METRICS_PATH) as f:
-            metrics = json.load(f)
-        importances = metrics.get("feature_importances", {})
+    importances = metrics.get("feature_importances", {})
 
     result = {
         "prediction_date": latest_date,
@@ -92,8 +119,8 @@ def predict_next_day() -> dict:
         "confidence": confidence,
         "feature_importances": importances,
         "input_features": {
-            col: float(df[col].iloc[0]) if pd.notna(df[col].iloc[0]) else None
-            for col in FEATURE_COLS
+            col: float(df[col].iloc[0]) if col in df.columns and pd.notna(df[col].iloc[0]) else None
+            for col in feature_cols
         },
     }
 
@@ -107,8 +134,11 @@ if __name__ == "__main__":
     if result["confidence"]:
         c = result["confidence"]
         print(f"  Confidence range:    {c['range_low']} - {c['range_high']}")
+        print(f"  Model:               {c.get('best_model', '?')}")
         print(f"  Model MAE:           {c['cv_mae']}")
         print(f"  Model R²:            {c['cv_r2']}")
+        if c.get("sample_size_warning"):
+            print("  WARNING: Model trained on < 50 samples — predictions may be unreliable")
     print("\nTop input features:")
     for feat, val in list(result["input_features"].items())[:10]:
         print(f"  {feat:30s} = {val}")

@@ -91,7 +91,7 @@ with st.sidebar:
     st.title("🧬 Bio Insights")
     page = st.radio(
         "Navigate",
-        ["💬 Ask", "📊 Insights", "📋 Weekly Report", "🔮 What-If", "🎯 Predictions", "📤 Export"],
+        ["💬 Ask", "📊 Insights", "📋 Weekly Report", "🔮 What-If", "🎯 Predictions", "🧪 Experiments", "📤 Export"],
         label_visibility="collapsed",
     )
     st.divider()
@@ -853,6 +853,19 @@ elif page == "🎯 Predictions":
     metrics_path = model_dir / "metrics.json"
     backtest_path = model_dir / "backtest.csv"
 
+    # Load metrics for model comparison and sample size warning
+    _metrics = {}
+    if metrics_path.exists():
+        with open(metrics_path) as _mf:
+            _metrics = json.load(_mf)
+
+    # Sample size warning badge
+    if _metrics.get("sample_size_warning"):
+        st.warning(
+            f"Model trained on {_metrics.get('n_samples', '?')} samples (< 50) "
+            "— predictions may be unreliable. Consider collecting more data."
+        )
+
     @st.cache_data(ttl=600, show_spinner="Running prediction...")
     def _cached_prediction():
         import sys
@@ -916,90 +929,103 @@ elif page == "🎯 Predictions":
                     st.metric("Confidence Range", f"{conf.get('range_low', '?')} - {conf.get('range_high', '?')}")
                     st.metric("Model MAE", f"{conf.get('cv_mae', '?')}")
                     st.metric("Model R\u00b2", f"{conf.get('cv_r2', '?')}")
-                    st.caption(f"Trained on {conf.get('n_training_samples', '?')} days of data")
+                    best_model_name = conf.get("best_model", _metrics.get("best_model", "?"))
+                    st.caption(f"Model: **{best_model_name}** | Trained on {conf.get('n_training_samples', '?')} days")
 
                 # Freshness: show current input features
                 inputs = pred_result.get("input_features", {})
-                today_readiness = inputs.get("readiness_score")
-                today_sleep = inputs.get("sleep_score")
-                if today_readiness is not None:
-                    st.caption(f"Today's readiness: {today_readiness:.0f} | sleep: {today_sleep:.0f}" if today_sleep else f"Today's readiness: {today_readiness:.0f}")
+                today_rhr = inputs.get("resting_hr")
+                today_ctl = inputs.get("ctl")
+                if today_rhr is not None:
+                    st.caption(f"Today's resting HR: {today_rhr:.0f}" + (f" | CTL: {today_ctl:.1f}" if today_ctl else ""))
+
+            # ── Model Comparison Table ──
+            candidate_comp = _metrics.get("candidate_comparison", {})
+            baseline_info = _metrics.get("naive_baseline", {})
+            if candidate_comp:
+                with st.expander("Model Comparison (all candidates)"):
+                    comp_rows = []
+                    if baseline_info:
+                        comp_rows.append({
+                            "Model": "Naive Baseline (7d avg)",
+                            "CV MAE": baseline_info.get("cv_mae", "—"),
+                            "CV RMSE": baseline_info.get("cv_rmse", "—"),
+                            "CV R²": baseline_info.get("cv_r2", "—"),
+                        })
+                    for name, res in candidate_comp.items():
+                        winner_tag = " *" if name == _metrics.get("best_model") else ""
+                        comp_rows.append({
+                            "Model": name + winner_tag,
+                            "CV MAE": res.get("cv_mae", "—"),
+                            "CV RMSE": res.get("cv_rmse", "—"),
+                            "CV R²": res.get("cv_r2", "—"),
+                        })
+                    st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
+
+            # ── MLflow history ──
+            try:
+                from models.readiness_predictor.mlflow_config import TRACKING_URI, EXPERIMENT_NAME
+                import mlflow
+                mlflow.set_tracking_uri(TRACKING_URI)
+                experiment = mlflow.get_experiment_by_name(EXPERIMENT_NAME)
+                if experiment:
+                    with st.expander("MLflow Experiment History"):
+                        runs = mlflow.search_runs(
+                            experiment_ids=[experiment.experiment_id],
+                            order_by=["start_time DESC"],
+                            max_results=10,
+                        )
+                        if not runs.empty:
+                            display_cols = [c for c in ["run_id", "tags.mlflow.runName", "params.model_type",
+                                                         "metrics.cv_mae", "metrics.cv_r2", "start_time"] if c in runs.columns]
+                            st.dataframe(runs[display_cols], hide_index=True, use_container_width=True)
+                            st.caption(f"View full history: `mlflow ui --backend-store-uri {TRACKING_URI}`")
+            except (ImportError, Exception):
+                pass
 
             st.divider()
 
-            # ── Feature Importance Chart ──
-            st.subheader("Top Feature Drivers")
-            importances = pred_result.get("feature_importances", {})
-            if importances:
-                import plotly.express as px
+            # ── Tabs: Predictions + Diagnostics ──
+            pred_tab, diag_tab = st.tabs(["Prediction Details", "Model Diagnostics"])
 
-                top_n = dict(list(importances.items())[:10])
-                imp_df = pd.DataFrame({
-                    "Feature": list(top_n.keys()),
-                    "Importance": list(top_n.values()),
-                })
-                imp_df = imp_df.sort_values("Importance", ascending=True)
+            with pred_tab:
+                # ── Feature Importance Chart ──
+                st.subheader("Top Feature Drivers")
+                importances = pred_result.get("feature_importances", {})
+                if importances:
+                    import plotly.express as px
 
-                fig_imp = px.bar(
-                    imp_df, x="Importance", y="Feature", orientation="h",
-                    color_discrete_sequence=[_palette["primary"]],
-                )
-                fig_imp.update_layout(
-                    height=350,
-                    template="plotly_dark" if _dark else "plotly_white",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    yaxis_title="",
-                    xaxis_title="Feature Importance",
-                    margin=dict(l=20, r=20, t=30, b=20),
-                )
-                st.plotly_chart(fig_imp, use_container_width=True)
+                    top_n = dict(list(importances.items())[:10])
+                    imp_df = pd.DataFrame({
+                        "Feature": list(top_n.keys()),
+                        "Importance": list(top_n.values()),
+                    })
+                    imp_df = imp_df.sort_values("Importance", ascending=True)
 
-            st.divider()
-
-            # ── Backtest: Predicted vs Actual ──
-            st.subheader("Backtest: Predicted vs Actual")
-
-            if backtest_path.exists():
-                bt = pd.read_csv(backtest_path)
-                bt["date"] = pd.to_datetime(bt["date"])
-                bt["next_day_readiness"] = pd.to_numeric(bt["next_day_readiness"], errors="coerce")
-                bt["predicted"] = pd.to_numeric(bt["predicted"], errors="coerce")
-                bt = bt.dropna()
-
-                col_scatter, col_time = st.columns(2)
-
-                with col_scatter:
-                    import plotly.graph_objects as go
-
-                    fig_scatter = go.Figure()
-                    fig_scatter.add_trace(go.Scatter(
-                        x=bt["next_day_readiness"], y=bt["predicted"],
-                        mode="markers",
-                        marker=dict(color=_palette["primary"], size=6, opacity=0.6),
-                        name="Predictions",
-                    ))
-                    # Perfect prediction line
-                    fig_scatter.add_trace(go.Scatter(
-                        x=[bt["next_day_readiness"].min(), bt["next_day_readiness"].max()],
-                        y=[bt["next_day_readiness"].min(), bt["next_day_readiness"].max()],
-                        mode="lines",
-                        line=dict(color=_palette["text_muted"], dash="dash"),
-                        name="Perfect",
-                    ))
-                    fig_scatter.update_layout(
-                        title="Predicted vs Actual",
-                        xaxis_title="Actual Readiness",
-                        yaxis_title="Predicted Readiness",
+                    fig_imp = px.bar(
+                        imp_df, x="Importance", y="Feature", orientation="h",
+                        color_discrete_sequence=[_palette["primary"]],
+                    )
+                    fig_imp.update_layout(
                         height=350,
                         template="plotly_dark" if _dark else "plotly_white",
                         paper_bgcolor="rgba(0,0,0,0)",
                         plot_bgcolor="rgba(0,0,0,0)",
-                        showlegend=False,
+                        yaxis_title="",
+                        xaxis_title="Feature Importance",
+                        margin=dict(l=20, r=20, t=30, b=20),
                     )
-                    st.plotly_chart(fig_scatter, use_container_width=True)
+                    st.plotly_chart(fig_imp, use_container_width=True)
 
-                with col_time:
+                # ── Backtest: Over Time ──
+                st.subheader("Backtest: Predicted vs Actual")
+                if backtest_path.exists():
+                    bt = pd.read_csv(backtest_path)
+                    bt["date"] = pd.to_datetime(bt["date"])
+                    bt["next_day_readiness"] = pd.to_numeric(bt["next_day_readiness"], errors="coerce")
+                    bt["predicted"] = pd.to_numeric(bt["predicted"], errors="coerce")
+                    bt = bt.dropna()
+
                     fig_time = go.Figure()
                     fig_time.add_trace(go.Scatter(
                         x=bt["date"], y=bt["next_day_readiness"],
@@ -1012,30 +1038,313 @@ elif page == "🎯 Predictions":
                         line=dict(color=_palette["primary"], width=2, dash="dot"),
                     ))
                     fig_time.update_layout(
-                        title="Over Time",
-                        xaxis_title="Date",
-                        yaxis_title="Readiness Score",
+                        xaxis_title="Date", yaxis_title="Readiness Score",
                         height=350,
                         template="plotly_dark" if _dark else "plotly_white",
                         paper_bgcolor="rgba(0,0,0,0)",
                         plot_bgcolor="rgba(0,0,0,0)",
                     )
                     st.plotly_chart(fig_time, use_container_width=True)
+                else:
+                    st.info("No backtest data available. Run training to generate backtest results.")
 
-                # Residual stats
-                residuals = bt["predicted"] - bt["next_day_readiness"]
-                with st.expander("Model Statistics"):
-                    st.caption(f"Mean residual: {residuals.mean():.2f} (positive = model overestimates)")
-                    st.caption(f"Std residual: {residuals.std():.2f}")
-                    st.caption(f"Max overestimate: {residuals.max():.1f} | Max underestimate: {residuals.min():.1f}")
-            else:
-                st.info("No backtest data available. Run training to generate backtest results.")
+            with diag_tab:
+                st.subheader("Model Diagnostics")
+
+                if backtest_path.exists():
+                    bt = pd.read_csv(backtest_path)
+                    bt["date"] = pd.to_datetime(bt["date"])
+                    bt["next_day_readiness"] = pd.to_numeric(bt["next_day_readiness"], errors="coerce")
+                    bt["predicted"] = pd.to_numeric(bt["predicted"], errors="coerce")
+                    bt = bt.dropna()
+                    residuals = bt["predicted"] - bt["next_day_readiness"]
+
+                    diag_col1, diag_col2 = st.columns(2)
+
+                    # Residual plot: predicted vs actual scatter + zero line
+                    with diag_col1:
+                        st.markdown("**Residual Plot**")
+                        fig_resid = go.Figure()
+                        fig_resid.add_trace(go.Scatter(
+                            x=bt["predicted"], y=residuals,
+                            mode="markers",
+                            marker=dict(color=_palette["primary"], size=6, opacity=0.6),
+                            name="Residuals",
+                        ))
+                        fig_resid.add_hline(y=0, line_dash="dash", line_color=_palette["danger"])
+                        fig_resid.update_layout(
+                            xaxis_title="Predicted", yaxis_title="Residual (Pred - Actual)",
+                            height=350,
+                            template="plotly_dark" if _dark else "plotly_white",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            showlegend=False,
+                        )
+                        st.plotly_chart(fig_resid, use_container_width=True)
+
+                    # Learning curve: MAE vs training set size
+                    with diag_col2:
+                        st.markdown("**Learning Curve (Walk-Forward)**")
+                        cv_details = _metrics.get("cv_details", [])
+                        if cv_details:
+                            lc_df = pd.DataFrame(cv_details)
+                            fig_lc = go.Figure()
+                            fig_lc.add_trace(go.Scatter(
+                                x=lc_df["n_train"], y=lc_df["mae"],
+                                mode="lines+markers", name="MAE",
+                                line=dict(color=_palette["accent"], width=2),
+                                marker=dict(size=6),
+                            ))
+                            fig_lc.update_layout(
+                                xaxis_title="Training Set Size", yaxis_title="MAE",
+                                height=350,
+                                template="plotly_dark" if _dark else "plotly_white",
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                plot_bgcolor="rgba(0,0,0,0)",
+                            )
+                            st.plotly_chart(fig_lc, use_container_width=True)
+
+                    # Residual statistics
+                    st.markdown("**Residual Statistics**")
+                    stat_cols = st.columns(4)
+                    stat_cols[0].metric("Mean Residual", f"{residuals.mean():.2f}")
+                    stat_cols[1].metric("Std Residual", f"{residuals.std():.2f}")
+                    stat_cols[2].metric("Max Overestimate", f"{residuals.max():.1f}")
+                    stat_cols[3].metric("Max Underestimate", f"{residuals.min():.1f}")
+
+                    # Feature importance (moved into diagnostics tab)
+                    if importances:
+                        st.markdown("**Feature Importances**")
+                        imp_df_diag = pd.DataFrame({
+                            "Feature": list(importances.keys()),
+                            "Importance": [round(v, 4) for v in importances.values()],
+                        })
+                        st.dataframe(imp_df_diag, hide_index=True, use_container_width=True)
+                else:
+                    st.info("Run model training to generate diagnostics data.")
 
     st.divider()
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# PAGE 6: FHIR EXPORT
+# PAGE 6: EXPERIMENTS
+# ══════════════════════════════════════════════════════════════════════════
+elif page == "🧪 Experiments":
+    st.header("Experiment Tracker")
+    st.caption(
+        "Log interventions (supplements, training changes, diet, etc.) and analyze their causal effects."
+    )
+
+    from insights_engine.experiments.tracker import ExperimentStore, Intervention, InterventionType
+    from insights_engine.experiments.analyzer import (
+        get_pre_post_data, bayesian_analysis, did_analysis, ANALYSIS_METRICS,
+    )
+    from insights_engine.experiments import viz as exp_viz
+    import numpy as np
+
+    store = ExperimentStore()
+
+    exp_tab_active, exp_tab_log, exp_tab_analysis = st.tabs(["Active", "Log New", "Analysis"])
+
+    # ── Active Interventions Tab ──
+    with exp_tab_active:
+        st.subheader("Active & Past Interventions")
+        try:
+            all_interventions = store.list_interventions()
+        except Exception as e:
+            st.error(f"Failed to load interventions: {e}")
+            all_interventions = []
+
+        if not all_interventions:
+            st.info("No interventions logged yet. Use the 'Log New' tab to add one.")
+        else:
+            active = [i for i in all_interventions if i.is_active]
+            ended = [i for i in all_interventions if not i.is_active]
+
+            # Check for overlaps among active interventions
+            if len(active) > 1:
+                st.warning(
+                    f"{len(active)} interventions are active simultaneously — "
+                    "results may be confounded. Consider ending one before analyzing."
+                )
+
+            if active:
+                st.markdown("**Active**")
+                for intv in active:
+                    col_info, col_action = st.columns([4, 1])
+                    with col_info:
+                        st.markdown(
+                            f"**{intv.name}** ({intv.type.value}) — "
+                            f"Started {intv.start_date}"
+                            + (f" | {intv.details}" if intv.details else "")
+                        )
+                    with col_action:
+                        if st.button("End", key=f"end_{intv.id}"):
+                            store.end_intervention(intv.id)
+                            st.rerun()
+
+            if ended:
+                st.markdown("**Ended**")
+                summary_data = []
+                for intv in ended:
+                    summary_data.append({
+                        "name": intv.name,
+                        "type": intv.type.value,
+                        "start_date": intv.start_date,
+                        "end_date": intv.end_date or "—",
+                        "is_active": False,
+                        "verdict": "—",
+                    })
+                summary_df = exp_viz.experiment_summary_table(summary_data)
+                if not summary_df.empty:
+                    st.dataframe(summary_df, hide_index=True, use_container_width=True)
+
+    # ── Log New Intervention Tab ──
+    with exp_tab_log:
+        st.subheader("Log a New Intervention")
+
+        with st.form("new_intervention_form"):
+            intv_name = st.text_input("Intervention Name", placeholder="e.g., Creatine 5g daily")
+            intv_type = st.selectbox(
+                "Type",
+                [t.value for t in InterventionType],
+                format_func=lambda x: x.replace("_", " ").title(),
+            )
+            intv_details = st.text_area("Details", placeholder="Dosage, protocol, etc.")
+            intv_start = st.date_input("Start Date", value=date.today())
+            intv_washout = st.number_input("Washout Days", min_value=0, max_value=30, value=3,
+                                           help="Days after ending before analyzing (to account for lingering effects)")
+            intv_notes = st.text_area("Notes", placeholder="Why you're trying this, expected outcome, etc.")
+
+            submitted = st.form_submit_button("Log Intervention", type="primary")
+
+            if submitted:
+                if not intv_name:
+                    st.error("Please enter an intervention name.")
+                else:
+                    # Check for overlaps
+                    overlaps = store.check_overlaps(intv_start.isoformat())
+                    if overlaps:
+                        overlap_names = ", ".join(o.name for o in overlaps)
+                        st.warning(f"Overlaps with: {overlap_names} — effects may be confounded.")
+
+                    new_intv = Intervention(
+                        id=ExperimentStore.new_id(),
+                        name=intv_name,
+                        type=InterventionType(intv_type),
+                        details=intv_details,
+                        start_date=intv_start.isoformat(),
+                        washout_days=intv_washout,
+                        notes=intv_notes,
+                    )
+                    try:
+                        store.add_intervention(new_intv)
+                        st.success(f"Logged: {intv_name}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to save: {e}")
+
+    # ── Analysis Tab ──
+    with exp_tab_analysis:
+        st.subheader("Intervention Analysis")
+
+        try:
+            all_for_analysis = store.list_interventions()
+        except Exception:
+            all_for_analysis = []
+
+        if not all_for_analysis:
+            st.info("Log an intervention first, then come back here to analyze its effect.")
+        else:
+            sel_intv_name = st.selectbox(
+                "Select Intervention",
+                [i.name for i in all_for_analysis],
+                key="analysis_intv_select",
+            )
+            sel_intv = next((i for i in all_for_analysis if i.name == sel_intv_name), None)
+
+            sel_metric = st.selectbox(
+                "Metric to Analyze",
+                list(ANALYSIS_METRICS.keys()),
+                format_func=lambda k: ANALYSIS_METRICS[k],
+                key="analysis_metric_select",
+            )
+
+            if sel_intv and st.button("Run Analysis", type="primary"):
+                athena = get_athena()
+                metric_label = ANALYSIS_METRICS[sel_metric]
+
+                with st.spinner("Fetching data and running analysis..."):
+                    try:
+                        pre_df, post_df = get_pre_post_data(athena, sel_intv, sel_metric)
+
+                        if pre_df.empty or post_df.empty:
+                            st.warning("Not enough data for analysis. Need both pre and post observations.")
+                        else:
+                            pre_vals = pre_df[sel_metric].values
+                            post_vals = post_df[sel_metric].values
+
+                            # ── Bayesian Analysis ──
+                            bayes = bayesian_analysis(pre_vals, post_vals)
+
+                            st.markdown("### Bayesian Analysis")
+                            bayes_cols = st.columns(4)
+                            bayes_cols[0].metric("Effect", f"{bayes.posterior_mean_effect:+.2f}")
+                            bayes_cols[1].metric("P(Positive)", f"{bayes.prob_positive:.1%}")
+                            bayes_cols[2].metric("Cohen's d", f"{bayes.cohens_d:.2f}")
+                            bayes_cols[3].metric("Verdict", bayes.verdict)
+
+                            st.caption(
+                                f"95% CI: [{bayes.credible_interval_95[0]:.2f}, {bayes.credible_interval_95[1]:.2f}] | "
+                                f"Pre: {bayes.pre_mean:.1f} (n={bayes.n_pre}) → Post: {bayes.post_mean:.1f} (n={bayes.n_post})"
+                            )
+
+                            # Charts
+                            chart_col1, chart_col2 = st.columns(2)
+                            with chart_col1:
+                                timeline_fig = exp_viz.intervention_timeline(
+                                    pre_df, post_df, sel_metric, metric_label,
+                                    sel_intv.name, sel_intv.start_date, sel_intv.end_date,
+                                    dark=_dark,
+                                )
+                                st.plotly_chart(timeline_fig, use_container_width=True)
+
+                            with chart_col2:
+                                dist_fig = exp_viz.before_after_distribution(
+                                    pre_vals, post_vals, metric_label, dark=_dark,
+                                )
+                                st.plotly_chart(dist_fig, use_container_width=True)
+
+                            # Posterior plot
+                            post_fig = exp_viz.posterior_plot(bayes, dark=_dark)
+                            st.plotly_chart(post_fig, use_container_width=True)
+
+                            # ── DiD Analysis ──
+                            st.markdown("### Difference-in-Differences")
+                            did = did_analysis(pre_df, post_df, sel_metric)
+
+                            if did.warning:
+                                st.warning(did.warning)
+
+                            did_cols = st.columns(3)
+                            did_cols[0].metric("DiD Effect", f"{did.did_effect:+.2f}")
+                            did_cols[1].metric("Pre-Trend R²", f"{did.pre_trend_r2:.3f}")
+                            did_cols[2].metric(
+                                "Parallel Trends",
+                                "Valid" if did.parallel_trends_valid else "Invalid",
+                            )
+                            st.caption(
+                                f"Counterfactual post mean: {did.counterfactual_post_mean:.1f} | "
+                                f"Actual post mean: {did.actual_post_mean:.1f} | "
+                                f"Pre-trend slope: {did.pre_trend_slope:.4f}/day"
+                            )
+
+                    except Exception as e:
+                        st.error(f"Analysis failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PAGE 7: FHIR EXPORT
 # ══════════════════════════════════════════════════════════════════════════
 elif page == "📤 Export":
     st.header("FHIR R4 Bundle Export")

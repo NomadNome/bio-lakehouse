@@ -143,6 +143,10 @@ bio-lakehouse/
 │   │   ├── readiness_trend.py         # 3c: Trends + Rolling Avg
 │   │   ├── anomaly_detection.py       # 3d: Anomaly Flags
 │   │   └── timing_correlation.py      # 3e: Intensity Impact
+│   ├── experiments/                   # Phase 7: Experiment Tracker
+│   │   ├── tracker.py                 # Intervention CRUD (S3 JSON)
+│   │   ├── analyzer.py                # Bayesian + DiD analysis
+│   │   └── viz.py                     # Experiment visualizations
 │   ├── viz/
 │   │   ├── theme.py                   # Plotly dark theme
 │   │   └── export.py                  # Static PNG export
@@ -154,6 +158,11 @@ bio-lakehouse/
 │       ├── nl_to_sql_system.txt
 │       ├── nl_to_sql_examples.txt
 │       └── insight_narrator.txt
+├── models/readiness_predictor/        # Phase 7: ML Pipeline
+│   ├── train.py                       # Multi-model training + Optuna
+│   ├── predict.py                     # Inference (MLflow or joblib)
+│   ├── feature_selection.py           # MI + correlation feature selection
+│   └── mlflow_config.py              # MLflow tracking setup
 ├── scripts/
 │   └── run_weekly_report.py           # CLI / cron entry point
 ├── tests/                             # 43 unit tests
@@ -454,6 +463,32 @@ The patterns here — event-driven ingestion, metadata-driven governance, AI-pow
 - Apple Health integration (HealthKit CSV export → Bronze layer)  
 - Multi-model NL-to-SQL comparison (benchmark Claude vs GPT-4 Turbo vs Gemini Pro)  
 - Real-time streaming (Kinesis Data Streams → Lambda → Silver, replace batch Glue)
+
+---
+
+## Lessons Learned
+
+Building a data lakehouse on real biometric data surfaced engineering problems that synthetic demos never encounter. These lessons shaped the project's architecture and are directly transferable to production AI systems.
+
+### Why the First ML Model Failed
+
+The initial readiness predictor used GradientBoosting with 200 estimators and max depth 4 — wildly overparameterized for 88 training samples. The result: **R² = -0.556**, worse than predicting the mean. The fix was systematic: benchmark against a naive baseline (7-day rolling average), match model complexity to sample size (Ridge regression with strong regularization), and use walk-forward cross-validation with more folds. **Lesson:** Always include a naive baseline. If your model can't beat "predict the average," it's learning noise, not signal.
+
+### Bronze CSV Column Order Bug
+
+Spark's CSV reader silently misaligns values when files have different column header orders. Our Bronze bucket contained both bulk-uploaded CSVs (alphabetical columns) and Lambda-generated CSVs (`id, day, score, ...` order). Spark read them all as if columns matched. Rows passed schema validation but contained garbage data. **Lesson:** Validate data shapes (spot-check actual values), not just schema presence. Trust-but-verify at every layer boundary.
+
+### PySpark Dict Key Sorting
+
+`createDataFrame` with Python dicts sorts keys alphabetically, silently breaking column alignment with the provided schema. A dict `{"score": 85, "day": "2025-11-25"}` becomes `(day, score)` regardless of schema field order. **Lesson:** Use tuples with explicit schema, never dicts. Implicit ordering is a production bug waiting to happen.
+
+### Feature Leakage in ML Pipeline
+
+Same-day readiness contributors (recovery index, resting heart rate score) correlated perfectly with the target because they're *derived from* readiness. Including them made the model look accurate on training data while learning nothing predictive. The Phase 7 feature selection module now maintains an explicit leaky-feature exclusion list and validates temporal ordering against the dbt SQL. **Lesson:** Audit every feature for temporal leakage before training. High feature importance on a same-day measurement is a red flag, not a win.
+
+### Small-Sample ML Strategy
+
+With only ~90 samples, ensemble methods with hundreds of parameters learn noise. Linear models with strong regularization (Ridge, ElasticNet) consistently outperformed tree-based models in walk-forward CV. The pipeline now includes sample size warnings and automatically selects conservative architectures. **Lesson:** Model complexity should scale with data volume. More parameters ≠ better predictions.
 
 ---
 
