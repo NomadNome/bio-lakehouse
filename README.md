@@ -492,4 +492,29 @@ With only ~90 samples, ensemble methods with hundreds of parameters learn noise.
 
 ---
 
+## Model Performance Notes (as of Feb 2026, N=87)
+
+**Current Metrics:**
+- MAE: 5.0 (beats naive baseline of 5.4)
+- R²: Negative (expected with <100 samples — model outperforms the mean on absolute error but not variance)
+- Cross-validation: Walk-forward with 7-day test windows, min 30-sample training set
+
+**Feature Engineering Wins:**
+- Sleep debt tracking (7-day cumulative deficit) is the #2 feature by importance (0.20) — confirms compounding sleep loss predicts readiness crashes beyond nightly scores
+- Deep sleep score (Oura contributor) was selected by MI but gets zero importance from GradientBoosting — likely redundant with sleep_score
+- HRV velocity (2-day delta) contributes at 10% importance — captures autonomic stress dynamics that static HRV misses
+- TSB (training stress balance) is #1 feature (0.26) — validates the CTL/ATL framework from training load analysis
+
+**Honest Limitations:**
+- `sleep_debt_7d` (MI=0.10) might capture "recent poor sleep" rather than true compounding deficit — needs more samples to distinguish
+- `hrv_2day_change` (MI=0.04) is borderline noise — may get pruned when feature selection tightens at higher N
+- `deep_sleep_score` and `hrv_balance_score` have zero model importance despite being selected — will likely be dropped at N=150+
+
+**Path to Production:**
+- Target: 150+ samples for stable R² > 0.25
+- Timeline: ~8 weeks at current ingestion rate
+- Plan: Retrain monthly, monitor feature importance drift, let the model decide what stays
+
+---
+
 Built with [Claude](https://anthropic.com) • Data Engineering on AWS • Open Source (MIT License)
