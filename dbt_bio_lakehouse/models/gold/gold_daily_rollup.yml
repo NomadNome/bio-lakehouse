@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: gold_daily_rollup
+    description: >
+      Daily rollup joining readiness, sleep, activity, Peloton workouts,
+      HealthKit vitals/workouts/body/mindfulness. Replaces the Glue
+      readiness_aggregator.py PySpark job.
+    columns:
+      - name: date
+        description: Calendar date (YYYY-MM-DD)
+        tests:
+          - not_null
+          - unique:
+              config:
+                severity: warn
+      - name: readiness_score
+        description: Oura readiness score (0-100)
+      - name: sleep_score
+        description: Oura sleep score (0-100)
+      - name: combined_wellness_score
+        description: Weighted average of readiness (60%) and sleep (40%)
+      - name: had_workout
+        description: Boolean flag — did any workout occur this day
+      - name: total_workout_count
+        description: Sum of Peloton + HealthKit workout count
+      - name: readiness_to_output_ratio
+        description: total_output_kj / readiness_score — efficiency metric

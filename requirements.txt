@@ -11,3 +11,10 @@ streamlit>=1.40.0
 pandas>=2.0.0
 plotly>=5.0.0
 python-dotenv>=1.0.0
+
+# dbt (Athena adapter)
+dbt-athena-community>=1.7.0
+
+# ML Predictor
+scikit-learn>=1.4.0
+joblib>=1.3.0

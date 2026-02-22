@@ -91,7 +91,7 @@ with st.sidebar:
     st.title("🧬 Bio Insights")
     page = st.radio(
         "Navigate",
-        ["💬 Ask", "📊 Insights", "📋 Weekly Report", "🔮 What-If", "📤 Export"],
+        ["💬 Ask", "📊 Insights", "📋 Weekly Report", "🔮 What-If", "🎯 Predictions", "📤 Export"],
         label_visibility="collapsed",
     )
     st.divider()
@@ -837,7 +837,205 @@ elif page == "🔮 What-If":
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# PAGE 5: FHIR EXPORT
+# PAGE 5: PREDICTIONS
+# ══════════════════════════════════════════════════════════════════════════
+elif page == "🎯 Predictions":
+    st.header("Next-Day Readiness Prediction")
+    st.caption(
+        "ML-powered prediction of tomorrow morning's readiness score based on today's data."
+    )
+
+    from pathlib import Path
+    import json
+
+    model_dir = Path(__file__).resolve().parent.parent / "models" / "readiness_predictor"
+    model_path = model_dir / "model.joblib"
+    metrics_path = model_dir / "metrics.json"
+    backtest_path = model_dir / "backtest.csv"
+
+    @st.cache_data(ttl=600, show_spinner="Running prediction...")
+    def _cached_prediction():
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from models.readiness_predictor.predict import predict_next_day
+        return predict_next_day()
+
+    if not model_path.exists():
+        st.warning(
+            "No trained model found. Run `python -m models.readiness_predictor.train` first."
+        )
+    else:
+        # ── Run prediction ──
+        pred_result = None
+        try:
+            pred_result = _cached_prediction()
+        except Exception as e:
+            st.error(f"Prediction failed: {e}")
+
+        if pred_result:
+            predicted = pred_result["predicted_readiness"]
+            conf = pred_result.get("confidence", {})
+
+            # ── Gauge + Metrics ──
+            col_gauge, col_metrics = st.columns([2, 1])
+
+            with col_gauge:
+                import plotly.graph_objects as go
+
+                gauge_fig = go.Figure(go.Indicator(
+                    mode="gauge+number+delta",
+                    value=predicted,
+                    title={"text": f"Predicted Readiness (day after {pred_result['prediction_date']})"},
+                    gauge={
+                        "axis": {"range": [0, 100]},
+                        "bar": {"color": _palette["primary"]},
+                        "steps": [
+                            {"range": [0, 50], "color": _palette["danger"]},
+                            {"range": [50, 70], "color": _palette["warning"]},
+                            {"range": [70, 85], "color": _palette["accent"]},
+                            {"range": [85, 100], "color": _palette["success"]},
+                        ],
+                        "threshold": {
+                            "line": {"color": "white", "width": 2},
+                            "thickness": 0.8,
+                            "value": predicted,
+                        },
+                    },
+                ))
+                gauge_fig.update_layout(
+                    height=300,
+                    template="plotly_dark" if _dark else "plotly_white",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(gauge_fig, use_container_width=True)
+
+            with col_metrics:
+                st.metric("Predicted Score", f"{predicted:.0f}")
+                if conf:
+                    st.metric("Confidence Range", f"{conf.get('range_low', '?')} - {conf.get('range_high', '?')}")
+                    st.metric("Model MAE", f"{conf.get('cv_mae', '?')}")
+                    st.metric("Model R\u00b2", f"{conf.get('cv_r2', '?')}")
+                    st.caption(f"Trained on {conf.get('n_training_samples', '?')} days of data")
+
+                # Freshness: show current input features
+                inputs = pred_result.get("input_features", {})
+                today_readiness = inputs.get("readiness_score")
+                today_sleep = inputs.get("sleep_score")
+                if today_readiness is not None:
+                    st.caption(f"Today's readiness: {today_readiness:.0f} | sleep: {today_sleep:.0f}" if today_sleep else f"Today's readiness: {today_readiness:.0f}")
+
+            st.divider()
+
+            # ── Feature Importance Chart ──
+            st.subheader("Top Feature Drivers")
+            importances = pred_result.get("feature_importances", {})
+            if importances:
+                import plotly.express as px
+
+                top_n = dict(list(importances.items())[:10])
+                imp_df = pd.DataFrame({
+                    "Feature": list(top_n.keys()),
+                    "Importance": list(top_n.values()),
+                })
+                imp_df = imp_df.sort_values("Importance", ascending=True)
+
+                fig_imp = px.bar(
+                    imp_df, x="Importance", y="Feature", orientation="h",
+                    color_discrete_sequence=[_palette["primary"]],
+                )
+                fig_imp.update_layout(
+                    height=350,
+                    template="plotly_dark" if _dark else "plotly_white",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    yaxis_title="",
+                    xaxis_title="Feature Importance",
+                    margin=dict(l=20, r=20, t=30, b=20),
+                )
+                st.plotly_chart(fig_imp, use_container_width=True)
+
+            st.divider()
+
+            # ── Backtest: Predicted vs Actual ──
+            st.subheader("Backtest: Predicted vs Actual")
+
+            if backtest_path.exists():
+                bt = pd.read_csv(backtest_path)
+                bt["date"] = pd.to_datetime(bt["date"])
+                bt["next_day_readiness"] = pd.to_numeric(bt["next_day_readiness"], errors="coerce")
+                bt["predicted"] = pd.to_numeric(bt["predicted"], errors="coerce")
+                bt = bt.dropna()
+
+                col_scatter, col_time = st.columns(2)
+
+                with col_scatter:
+                    import plotly.graph_objects as go
+
+                    fig_scatter = go.Figure()
+                    fig_scatter.add_trace(go.Scatter(
+                        x=bt["next_day_readiness"], y=bt["predicted"],
+                        mode="markers",
+                        marker=dict(color=_palette["primary"], size=6, opacity=0.6),
+                        name="Predictions",
+                    ))
+                    # Perfect prediction line
+                    fig_scatter.add_trace(go.Scatter(
+                        x=[bt["next_day_readiness"].min(), bt["next_day_readiness"].max()],
+                        y=[bt["next_day_readiness"].min(), bt["next_day_readiness"].max()],
+                        mode="lines",
+                        line=dict(color=_palette["text_muted"], dash="dash"),
+                        name="Perfect",
+                    ))
+                    fig_scatter.update_layout(
+                        title="Predicted vs Actual",
+                        xaxis_title="Actual Readiness",
+                        yaxis_title="Predicted Readiness",
+                        height=350,
+                        template="plotly_dark" if _dark else "plotly_white",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        showlegend=False,
+                    )
+                    st.plotly_chart(fig_scatter, use_container_width=True)
+
+                with col_time:
+                    fig_time = go.Figure()
+                    fig_time.add_trace(go.Scatter(
+                        x=bt["date"], y=bt["next_day_readiness"],
+                        mode="lines", name="Actual",
+                        line=dict(color=_palette["accent"], width=2),
+                    ))
+                    fig_time.add_trace(go.Scatter(
+                        x=bt["date"], y=bt["predicted"],
+                        mode="lines", name="Predicted",
+                        line=dict(color=_palette["primary"], width=2, dash="dot"),
+                    ))
+                    fig_time.update_layout(
+                        title="Over Time",
+                        xaxis_title="Date",
+                        yaxis_title="Readiness Score",
+                        height=350,
+                        template="plotly_dark" if _dark else "plotly_white",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                    )
+                    st.plotly_chart(fig_time, use_container_width=True)
+
+                # Residual stats
+                residuals = bt["predicted"] - bt["next_day_readiness"]
+                with st.expander("Model Statistics"):
+                    st.caption(f"Mean residual: {residuals.mean():.2f} (positive = model overestimates)")
+                    st.caption(f"Std residual: {residuals.std():.2f}")
+                    st.caption(f"Max overestimate: {residuals.max():.1f} | Max underestimate: {residuals.min():.1f}")
+            else:
+                st.info("No backtest data available. Run training to generate backtest results.")
+
+    st.divider()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PAGE 6: FHIR EXPORT
 # ══════════════════════════════════════════════════════════════════════════
 elif page == "📤 Export":
     st.header("FHIR R4 Bundle Export")

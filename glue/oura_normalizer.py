@@ -1,21 +1,24 @@
 """
 Bio Lakehouse - Oura Ring Data Normalizer (Glue ETL Job)
 
-Reads Bronze-layer Oura CSVs (readiness, sleep, activity), normalizes them,
-and writes partitioned Parquet to the Silver layer.
+Reads Bronze-layer Oura data (CSV and JSON) for readiness, sleep, and activity,
+normalizes them, and writes partitioned Parquet to the Silver layer.
 
 Glue job arguments:
   --bronze_bucket: Bronze S3 bucket name
   --silver_bucket: Silver S3 bucket name
 """
 
+import json
 import sys
 
+import boto3
 from awsglue.context import GlueContext
 from awsglue.job import Job
 from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
 from pyspark.sql import functions as F
+from pyspark.sql.types import StringType, StructField, StructType
 
 from bio_etl_utils import forward_fill, validate_schema
 
@@ -43,6 +46,39 @@ job.init(args["JOB_NAME"], args)
 BRONZE_BUCKET = args["bronze_bucket"]
 SILVER_BUCKET = args["silver_bucket"]
 
+# Column lists per data type (must match csv_transformer.py output)
+READINESS_COLUMNS = [
+    "id", "day", "score", "temperature_deviation",
+    "temperature_trend_deviation", "timestamp",
+    "contributors_activity_balance", "contributors_body_temperature",
+    "contributors_hrv_balance", "contributors_previous_day_activity",
+    "contributors_previous_night", "contributors_recovery_index",
+    "contributors_resting_heart_rate", "contributors_sleep_balance",
+    "contributors_sleep_regularity",
+]
+
+SLEEP_COLUMNS = [
+    "id", "day", "score", "timestamp",
+    "contributors_deep_sleep", "contributors_efficiency",
+    "contributors_latency", "contributors_rem_sleep",
+    "contributors_restfulness", "contributors_timing",
+    "contributors_total_sleep",
+]
+
+ACTIVITY_COLUMNS = [
+    "id", "day", "score", "timestamp",
+    "active_calories", "steps",
+    "high_activity_time", "medium_activity_time",
+    "low_activity_time", "sedentary_time", "total_calories",
+    "met_interval", "met_avg", "met_max", "met_count",
+]
+
+DATA_TYPE_COLUMNS = {
+    "readiness": READINESS_COLUMNS,
+    "sleep": SLEEP_COLUMNS,
+    "activity": ACTIVITY_COLUMNS,
+}
+
 
 def read_bronze_csv(path):
     """Read CSV with partition discovery disabled to avoid column shadowing."""
@@ -52,15 +88,134 @@ def read_bronze_csv(path):
         .option("inferSchema", "false")
         .option("basePath", path)
         .option("recursiveFileLookup", "true")
+        .option("pathGlobFilter", "*.csv")
         .csv(path)
     )
+
+
+def _flatten_json_record(record, data_type):
+    """Flatten a single JSON record to match CSV column schema."""
+    flat = {}
+    target_cols = DATA_TYPE_COLUMNS[data_type]
+
+    # Copy top-level scalar fields
+    for col in target_cols:
+        if col in record:
+            val = record[col]
+            flat[col] = str(val) if val is not None else ""
+
+    # Flatten contributors struct
+    contributors = record.get("contributors") or {}
+    for key, value in contributors.items():
+        col_name = f"contributors_{key}"
+        if col_name in target_cols:
+            flat[col_name] = str(value) if value is not None else ""
+
+    # Compute MET stats for activity
+    if data_type == "activity":
+        met = record.get("met") or {}
+        items = met.get("items") if isinstance(met, dict) else None
+        if items and len(items) > 0:
+            flat["met_interval"] = str(met.get("interval", ""))
+            flat["met_avg"] = str(round(sum(items) / len(items), 2))
+            flat["met_max"] = str(max(items))
+            flat["met_count"] = str(len(items))
+        else:
+            for k in ("met_interval", "met_avg", "met_max", "met_count"):
+                flat[k] = ""
+
+    # Fill missing columns with empty string
+    return {col: flat.get(col, "") for col in target_cols}
+
+
+def read_bronze_json(path, data_type):
+    """Read JSON files from Bronze using boto3, flatten to match CSV schema."""
+    # Parse s3://bucket/prefix/ into bucket and prefix
+    parts = path.replace("s3://", "").split("/", 1)
+    bucket = parts[0]
+    prefix = parts[1] if len(parts) > 1 else ""
+
+    s3 = boto3.client("s3")
+    all_rows = []
+
+    # List all .json files under the prefix
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if not key.endswith(".json"):
+                continue
+            try:
+                response = s3.get_object(Bucket=bucket, Key=key)
+                data = json.loads(response["Body"].read().decode("utf-8"))
+                records = data if isinstance(data, list) else [data]
+                for rec in records:
+                    all_rows.append(_flatten_json_record(rec, data_type))
+            except Exception as e:
+                print(f"Warning: failed to read {key}: {e}")
+                continue
+
+    if not all_rows:
+        return spark.createDataFrame([], StructType([]))
+
+    target_cols = DATA_TYPE_COLUMNS[data_type]
+    schema = StructType([StructField(c, StringType(), True) for c in target_cols])
+    # Convert dicts to tuples in schema order to avoid PySpark alphabetical key sorting
+    tuples = [tuple(row[c] for c in target_cols) for row in all_rows]
+    return spark.createDataFrame(tuples, schema=schema)
+
+
+def read_bronze(path, data_type):
+    """Read both CSV and JSON from Bronze, union and deduplicate on id."""
+    csv_df = None
+    json_df = None
+
+    try:
+        csv_df = read_bronze_csv(path)
+        if csv_df.rdd.isEmpty():
+            csv_df = None
+    except Exception:
+        csv_df = None
+
+    try:
+        json_df = read_bronze_json(path, data_type)
+        if json_df.rdd.isEmpty():
+            json_df = None
+    except Exception:
+        json_df = None
+
+    # Filter CSV rows with invalid day values (caused by mixed column orders across CSV files)
+    if csv_df is not None and "day" in csv_df.columns:
+        csv_df = csv_df.filter(F.col("day").rlike("^\\d{4}-\\d{2}-\\d{2}"))
+        if csv_df.rdd.isEmpty():
+            csv_df = None
+
+    if csv_df is None and json_df is None:
+        return spark.createDataFrame([], StructType([]))
+
+    if csv_df is not None and json_df is not None:
+        # Align CSV columns to match JSON selection
+        target_cols = DATA_TYPE_COLUMNS[data_type]
+        for col_name in target_cols:
+            if col_name not in csv_df.columns:
+                csv_df = csv_df.withColumn(col_name, F.lit(None).cast("string"))
+        csv_df = csv_df.select(target_cols)
+        combined = csv_df.unionByName(json_df)
+    elif csv_df is not None:
+        combined = csv_df
+    else:
+        combined = json_df
+
+    # Deduplicate — prefer first occurrence (CSV over JSON due to union order)
+    combined = combined.dropDuplicates(["id"])
+    return combined
 
 
 def process_readiness():
     """Normalize Oura daily readiness data."""
     print("Processing Oura readiness data...")
 
-    df = read_bronze_csv(f"s3://{BRONZE_BUCKET}/oura/readiness/")
+    df = read_bronze(f"s3://{BRONZE_BUCKET}/oura/readiness/", "readiness")
 
     if df.rdd.isEmpty():
         print("No readiness data found, skipping")
@@ -91,7 +246,7 @@ def process_sleep():
     """Normalize Oura daily sleep data."""
     print("Processing Oura sleep data...")
 
-    df = read_bronze_csv(f"s3://{BRONZE_BUCKET}/oura/sleep/")
+    df = read_bronze(f"s3://{BRONZE_BUCKET}/oura/sleep/", "sleep")
 
     if df.rdd.isEmpty():
         print("No sleep data found, skipping")
@@ -116,7 +271,7 @@ def process_activity():
     """Normalize Oura daily activity data."""
     print("Processing Oura activity data...")
 
-    df = read_bronze_csv(f"s3://{BRONZE_BUCKET}/oura/activity/")
+    df = read_bronze(f"s3://{BRONZE_BUCKET}/oura/activity/", "activity")
 
     if df.rdd.isEmpty():
         print("No activity data found, skipping")

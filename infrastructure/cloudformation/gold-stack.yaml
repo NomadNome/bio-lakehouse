@@ -148,6 +148,8 @@ Resources:
 
   # -------------------------------------------------------
   # Glue Trigger - Daily 2AM UTC schedule
+  # DISABLED: Replaced by dbt build (Phase 6). Trigger remains
+  # in stack but StartOnCreation set to false.
   # -------------------------------------------------------
   DailyAggregatorTrigger:
     Type: AWS::Glue::Trigger
@@ -155,7 +157,7 @@ Resources:
       Name: !Sub '${ProjectPrefix}-daily-aggregator-trigger'
       Type: SCHEDULED
       Schedule: 'cron(0 2 * * ? *)'
-      StartOnCreation: true
+      StartOnCreation: false
       Actions:
         - JobName: !Ref ReadinessAggregatorJob
 

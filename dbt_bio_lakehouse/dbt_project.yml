@@ -1,0 +1,28 @@
+name: 'bio_lakehouse'
+version: '1.0.0'
+config-version: 2
+
+profile: 'bio_lakehouse'
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  bio_lakehouse:
+    staging:
+      +materialized: view
+      +schema: silver
+    gold:
+      +materialized: table
+      +schema: gold
+    analytics:
+      +materialized: view
+      +schema: gold
+    features:
+      +materialized: table
+      +schema: gold

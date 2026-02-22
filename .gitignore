@@ -40,3 +40,15 @@ logs/
 .oura-tokens.json
 *.pem
 *.key
+
+# ML model artifacts
+models/readiness_predictor/model.joblib
+models/readiness_predictor/backtest.csv
+models/readiness_predictor/metrics.json
+
+# dbt
+dbt_bio_lakehouse/target/
+dbt_bio_lakehouse/dbt_packages/
+dbt_bio_lakehouse/logs/
+dbt_bio_lakehouse/profiles.yml
+dbt_bio_lakehouse/.user.yml

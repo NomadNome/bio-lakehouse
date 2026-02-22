@@ -1,0 +1,131 @@
+version: 2
+
+sources:
+  - name: bio_silver
+    database: awsdatacatalog
+    schema: bio_silver
+    description: Silver layer — normalized, deduplicated, partitioned data from Glue ETL
+    tables:
+      - name: oura_daily_readiness
+        description: Oura ring daily readiness scores and contributor breakdowns
+        columns:
+          - name: day
+            description: Date string (YYYY-MM-DD)
+          - name: score
+            description: Overall readiness score (0-100)
+          - name: contributors_hrv_balance
+            description: HRV balance contributor score
+          - name: contributors_resting_heart_rate
+            description: Resting heart rate contributor score
+          - name: contributors_previous_night
+            description: Previous night sleep contributor score
+          - name: contributors_recovery_index
+            description: Recovery index contributor score
+          - name: temperature_deviation
+            description: Body temperature deviation from baseline
+
+      - name: oura_daily_sleep
+        description: Oura ring daily sleep scores and contributor breakdowns
+        columns:
+          - name: day
+            description: Date string (YYYY-MM-DD)
+          - name: score
+            description: Overall sleep score (0-100)
+          - name: contributors_deep_sleep
+            description: Deep sleep contributor score
+          - name: contributors_rem_sleep
+            description: REM sleep contributor score
+          - name: contributors_efficiency
+            description: Sleep efficiency contributor score
+          - name: contributors_total_sleep
+            description: Total sleep duration contributor score
+
+      - name: oura_daily_activity
+        description: Oura ring daily activity scores and metrics
+        columns:
+          - name: day
+            description: Date string (YYYY-MM-DD)
+          - name: score
+            description: Overall activity score (0-100)
+          - name: active_calories
+            description: Active calories burned
+          - name: steps
+            description: Daily step count
+          - name: total_calories
+            description: Total calories burned
+
+      - name: peloton_workouts
+        description: Peloton workout data with power, HR, and duration metrics
+        columns:
+          - name: workout_date
+            description: Date of workout (YYYY-MM-DD)
+          - name: total_output_kj
+            description: Total output in kilojoules
+          - name: calories_burned
+            description: Calories burned during workout
+          - name: avg_watts
+            description: Average power output in watts
+          - name: avg_heartrate
+            description: Average heart rate during workout
+          - name: output_per_minute
+            description: Output per minute ratio
+          - name: workout_category
+            description: Category of workout (cycling, strength, etc.)
+          - name: length_minutes
+            description: Workout duration in minutes
+          - name: fitness_discipline
+            description: Fitness discipline (Cycling, Strength, etc.)
+
+      - name: healthkit_daily_vitals
+        description: Apple Health daily vitals (HR, HRV, VO2 max, SpO2)
+        columns:
+          - name: date
+            description: Date string (YYYY-MM-DD)
+          - name: resting_heart_rate_bpm
+            description: Resting heart rate in BPM
+          - name: hrv_ms
+            description: Heart rate variability in milliseconds
+          - name: vo2_max
+            description: VO2 max estimate
+          - name: blood_oxygen_pct
+            description: Blood oxygen saturation percentage
+          - name: respiratory_rate
+            description: Respiratory rate
+
+      - name: healthkit_workouts
+        description: Apple Health workout sessions
+        columns:
+          - name: date
+            description: Date string (YYYY-MM-DD)
+          - name: calories_burned
+            description: Calories burned
+          - name: duration_minutes
+            description: Workout duration in minutes
+          - name: workout_category
+            description: Workout category
+          - name: workout_type
+            description: Specific workout type
+
+      - name: healthkit_body
+        description: Apple Health body measurements (weight, body fat, BMI)
+        columns:
+          - name: date
+            description: Date string (YYYY-MM-DD)
+          - name: weight_lbs
+            description: Weight in pounds
+          - name: body_fat_pct
+            description: Body fat percentage
+          - name: bmi
+            description: Body mass index
+          - name: lean_body_mass_lbs
+            description: Lean body mass in pounds
+
+      - name: healthkit_mindfulness
+        description: Apple Health mindfulness sessions
+        columns:
+          - name: date
+            description: Date string (YYYY-MM-DD)
+          - name: duration_minutes
+            description: Mindfulness session duration
+          - name: session_count
+            description: Number of sessions
