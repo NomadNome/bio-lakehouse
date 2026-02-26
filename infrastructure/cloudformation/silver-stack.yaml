@@ -194,6 +194,52 @@ Resources:
       Tags:
         Project: !Ref ProjectPrefix
 
+  # -------------------------------------------------------
+  # EventBridge Rule - Glue Job Failure Alerts
+  # -------------------------------------------------------
+  GlueJobFailureRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectPrefix}-glue-failure-alerts'
+      EventPattern:
+        source:
+          - aws.glue
+        detail-type:
+          - Glue Job State Change
+        detail:
+          jobName:
+            - !Sub '${ProjectPrefix}-oura-normalizer'
+            - !Sub '${ProjectPrefix}-peloton-normalizer'
+            - !Sub '${ProjectPrefix}-healthkit-normalizer'
+            - !Sub '${ProjectPrefix}-dbt-gold-refresh'
+          state:
+            - FAILED
+            - TIMEOUT
+            - ERROR
+      Targets:
+        - Id: GlueFailureSNSTarget
+          Arn: !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${ProjectPrefix}-health-alerts'
+          InputTransformer:
+            InputPathsMap:
+              jobName: "$.detail.jobName"
+              state: "$.detail.state"
+            InputTemplate: '"Bio Lakehouse Pipeline Alert: <jobName> entered state <state>"'
+
+  GlueFailureSNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${ProjectPrefix}-health-alerts'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowEventBridgePublish
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: 'sns:Publish'
+            Resource: !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${ProjectPrefix}-health-alerts'
+
 Outputs:
   SilverBucketName:
     Description: Silver layer S3 bucket

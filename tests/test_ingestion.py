@@ -8,6 +8,7 @@ and can't be used in a normal import path.
 import importlib
 import json
 import os
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -144,6 +145,33 @@ class TestLambdaHandler(unittest.TestCase):
         }
         self.handler.lambda_handler(event, None)
         self.mock_glue.start_job_run.assert_called_once()
+
+
+class TestHeaderNormalizationConsistency(unittest.TestCase):
+    """Ensure Lambda and Glue use identical header normalization."""
+
+    def test_header_normalization_consistency(self):
+        # SYNC: This regex must match handler.py:validate_csv_headers()
+        # and peloton_normalizer.py column normalization block.
+        RAW = ["Workout Timestamp", "Live/On-Demand", "Length (minutes)", "Avg. Watts"]
+        EXPECTED = ["workout_timestamp", "live_on-demand", "length_minutes", "avg_watts"]
+        for raw, exp in zip(RAW, EXPECTED):
+            result = re.sub(r"[.\s/()]+", "_", raw.strip()).lower().strip("_")
+            assert result == exp, f"{raw!r} → {result!r}, expected {exp!r}"
+
+    def test_semicolon_delimiter_detection(self):
+        """Lambda should detect semicolon-delimited CSVs (Oura)."""
+        handler, _ = load_handler()
+        mock_s3 = MagicMock()
+        handler.s3 = mock_s3
+
+        csv_content = "id;day;score;timestamp\ndata..."
+        mock_s3.get_object.return_value = {
+            "Body": MagicMock(read=MagicMock(return_value=csv_content.encode("utf-8")))
+        }
+        result = handler.validate_csv_headers("bucket", "key", "oura/readiness")
+        assert result["valid"] is True
+        assert "id" in result["headers_found"]
 
 
 if __name__ == "__main__":

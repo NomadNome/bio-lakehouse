@@ -7,8 +7,9 @@ logs ingestion metadata to DynamoDB, and triggers downstream Glue ETL jobs.
 
 import json
 import os
+import re
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import boto3
 
@@ -16,6 +17,7 @@ import boto3
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
 glue = boto3.client("glue")
+sns = boto3.client("sns")
 
 # Environment
 INGESTION_LOG_TABLE = os.environ.get("INGESTION_LOG_TABLE", "bio_ingestion_log")
@@ -23,6 +25,7 @@ ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
 OURA_GLUE_JOB = os.environ.get("OURA_GLUE_JOB", "bio-lakehouse-oura-normalizer")
 PELOTON_GLUE_JOB = os.environ.get("PELOTON_GLUE_JOB", "bio-lakehouse-peloton-normalizer")
 HEALTHKIT_GLUE_JOB = os.environ.get("HEALTHKIT_GLUE_JOB", "bio-lakehouse-healthkit-normalizer")
+SNS_TOPIC_ARN = os.environ.get("ALERT_SNS_TOPIC_ARN", "")
 
 # Expected headers for validation
 EXPECTED_HEADERS = {
@@ -57,15 +60,45 @@ def validate_csv_headers(bucket: str, key: str, source: str) -> dict:
         resp = s3.get_object(Bucket=bucket, Key=key, Range="bytes=0-1024")
         first_chunk = resp["Body"].read().decode("utf-8")
         first_line = first_chunk.split("\n")[0].strip()
-        headers = [h.strip().lower() for h in first_line.split(",")]
 
-        expected = EXPECTED_HEADERS.get(source, [])
-        missing = [h for h in expected if h not in headers]
+        # SYNC: This normalization regex must match in both:
+        #   - lambda/ingestion_trigger/handler.py:validate_csv_headers()
+        #   - glue/peloton_normalizer.py (column normalization block)
+        raw_headers = first_line.split(",")
+        if len(raw_headers) <= 1:
+            raw_headers = first_line.split(";")
+        headers = [re.sub(r"[.\s/()]+", "_", h.strip()).lower().strip("_") for h in raw_headers]
+
+        expected = set(EXPECTED_HEADERS.get(source, []))
+        found = set(headers)
+        missing = sorted(expected - found)
+        unexpected = sorted(found - expected)
+
+        valid = len(missing) == 0
+
+        # Alert on schema drift (unexpected new columns)
+        if unexpected and SNS_TOPIC_ARN:
+            try:
+                sns.publish(
+                    TopicArn=SNS_TOPIC_ARN,
+                    Subject=f"Schema drift detected: {source}",
+                    Message=(
+                        f"File: s3://{bucket}/{key}\n"
+                        f"New columns found: {unexpected}\n"
+                        f"Expected columns: {sorted(expected)}\n"
+                        f"All headers: {headers}\n\n"
+                        f"Action: Review whether the source API changed. "
+                        f"Update EXPECTED_HEADERS and normalizer if needed."
+                    ),
+                )
+            except Exception as e:
+                print(f"Failed to publish drift alert: {e}")
 
         return {
-            "valid": len(missing) == 0,
+            "valid": valid,
             "headers_found": headers,
             "missing_headers": missing,
+            "unexpected_headers": unexpected,
             "header_count": len(headers),
         }
     except Exception as e:
@@ -74,6 +107,7 @@ def validate_csv_headers(bucket: str, key: str, source: str) -> dict:
             "error": str(e),
             "headers_found": [],
             "missing_headers": [],
+            "unexpected_headers": [],
             "header_count": 0,
         }
 
@@ -84,7 +118,7 @@ def log_ingestion(file_path: str, metadata: dict) -> None:
     table.put_item(
         Item={
             "file_path": file_path,
-            "upload_timestamp": int(datetime.now(timezone.utc).timestamp()),
+            "upload_timestamp": str(int(datetime.now(timezone.utc).timestamp())),
             "source": metadata.get("source", "unknown"),
             "validation": metadata.get("validation", {}),
             "file_size": metadata.get("file_size", 0),
@@ -103,6 +137,18 @@ def get_job_name(source):
     elif source.startswith("healthkit/"):
         return HEALTHKIT_GLUE_JOB
     return None
+
+
+def is_recently_processed(file_path, cooldown_seconds=300):
+    """Check if this file was already processed within the cooldown window."""
+    table = dynamodb.Table(INGESTION_LOG_TABLE)
+    cutoff = str(int((datetime.now(timezone.utc) - timedelta(seconds=cooldown_seconds)).timestamp()))
+    resp = table.query(
+        KeyConditionExpression="file_path = :fp AND upload_timestamp > :ts",
+        ExpressionAttributeValues={":fp": file_path, ":ts": cutoff},
+        Limit=1,
+    )
+    return len(resp.get("Items", [])) > 0
 
 
 def is_job_running(job_name):
@@ -224,6 +270,18 @@ def lambda_handler(event, context):
 
         print(f"Processing: s3://{bucket}/{key} ({size} bytes)")
 
+        # Skip zero-byte files
+        if size == 0:
+            print(f"Skipping 0-byte file: {key}")
+            results.append({"key": key, "skipped": True, "reason": "zero_bytes"})
+            continue
+
+        # Skip non-data files
+        if not key.endswith((".csv", ".json", "_manifest.json")):
+            print(f"Skipping non-data file: {key}")
+            results.append({"key": key, "skipped": True, "reason": "non_data_file"})
+            continue
+
         # Batch manifest handling — trigger normalizers once for bulk uploads
         if key.endswith("_manifest.json"):
             batch_result = handle_batch_manifest(bucket, key)
@@ -247,6 +305,13 @@ def lambda_handler(event, context):
         source = detect_source(key)
         print(f"Detected source: {source}")
 
+        # Duplicate guard — skip if same file was processed within last 5 minutes
+        file_s3_path = f"s3://{bucket}/{key}"
+        if is_recently_processed(file_s3_path):
+            print(f"Skipping duplicate upload (recently processed): {key}")
+            results.append({"key": key, "skipped": True, "reason": "duplicate"})
+            continue
+
         # Validate CSV headers
         validation = validate_csv_headers(bucket, key, source)
         print(f"Validation result: valid={validation['valid']}")
@@ -256,7 +321,7 @@ def lambda_handler(event, context):
 
         # Log to DynamoDB
         log_ingestion(
-            file_path=f"s3://{bucket}/{key}",
+            file_path=file_s3_path,
             metadata={
                 "source": source,
                 "validation": validation,
@@ -264,6 +329,22 @@ def lambda_handler(event, context):
                 "valid": validation["valid"],
             },
         )
+
+        # Alert on validation failure
+        if not validation["valid"] and SNS_TOPIC_ARN:
+            try:
+                sns.publish(
+                    TopicArn=SNS_TOPIC_ARN,
+                    Subject=f"Validation failed: {source}",
+                    Message=(
+                        f"File: {file_s3_path}\n"
+                        f"Missing headers: {validation.get('missing_headers', [])}\n"
+                        f"Headers found: {validation.get('headers_found', [])}\n"
+                        f"Error: {validation.get('error', 'N/A')}"
+                    ),
+                )
+            except Exception as e:
+                print(f"Failed to publish validation alert: {e}")
 
         # Trigger Glue job if validation passed
         glue_run_id = None

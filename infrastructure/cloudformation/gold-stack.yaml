@@ -162,6 +162,52 @@ Resources:
         - JobName: !Ref ReadinessAggregatorJob
 
   # -------------------------------------------------------
+  # Glue Job - dbt Gold Refresh (Python Shell)
+  # -------------------------------------------------------
+  GoldRefreshJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub '${ProjectPrefix}-dbt-gold-refresh'
+      Role: !ImportValue
+        Fn::Sub: '${ProjectPrefix}-glue-role-arn'
+      GlueVersion: '3.0'
+      MaxCapacity: 0.0625
+      Timeout: 30
+      Command:
+        Name: pythonshell
+        ScriptLocation: !Sub 's3://${GoldBucket}/scripts/dbt_gold_refresh.py'
+        PythonVersion: '3.9'
+      DefaultArguments:
+        '--gold_bucket': !Ref GoldBucket
+        '--athena_results_bucket': !Sub '${ProjectPrefix}-athena-results-${AWS::AccountId}'
+      Tags:
+        Project: !Ref ProjectPrefix
+
+  # -------------------------------------------------------
+  # Glue Trigger - Gold refresh after any normalizer succeeds
+  # -------------------------------------------------------
+  GoldRefreshAfterNormalizerTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: !Sub '${ProjectPrefix}-gold-refresh-after-normalizer'
+      Type: CONDITIONAL
+      StartOnCreation: true
+      Predicate:
+        Logical: ANY
+        Conditions:
+          - LogicalOperator: EQUALS
+            JobName: !Sub '${ProjectPrefix}-oura-normalizer'
+            State: SUCCEEDED
+          - LogicalOperator: EQUALS
+            JobName: !Sub '${ProjectPrefix}-peloton-normalizer'
+            State: SUCCEEDED
+          - LogicalOperator: EQUALS
+            JobName: !Sub '${ProjectPrefix}-healthkit-normalizer'
+            State: SUCCEEDED
+      Actions:
+        - JobName: !Ref GoldRefreshJob
+
+  # -------------------------------------------------------
   # IAM Policy - Allow Glue role to read/write Gold
   # -------------------------------------------------------
   GlueGoldAccessPolicy:
