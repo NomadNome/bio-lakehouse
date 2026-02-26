@@ -14,9 +14,16 @@ import urllib.error
 from datetime import datetime
 
 # Import modules under test
+# Clear any cached 'handler' from other Lambda test files (e.g. test_health_alerts)
+# to avoid sys.modules collision between lambda/health_alerts/handler.py and
+# lambda/oura_api_ingest/handler.py.
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../lambda/oura_api_ingest'))
+
+_oura_path = os.path.join(os.path.dirname(__file__), '../lambda/oura_api_ingest')
+sys.path.insert(0, _oura_path)
+for mod_name in ['handler', 'csv_transformer', 'oura_client']:
+    sys.modules.pop(mod_name, None)
 
 from handler import lambda_handler
 from csv_transformer import records_to_csv, COLUMNS
