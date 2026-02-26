@@ -154,9 +154,10 @@ def lambda_handler(event, context):
         start_date = event["date"]
         end_date = event["date"]
     else:
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
-        start_date = yesterday
-        end_date = yesterday
+        # Fetch today + yesterday: today's readiness is available after wake-up,
+        # and yesterday's activity may finalize late.
+        start_date = (date.today() - timedelta(days=1)).isoformat()
+        end_date = date.today().isoformat()
 
     print(f"Processing date range: {start_date} to {end_date}")
 

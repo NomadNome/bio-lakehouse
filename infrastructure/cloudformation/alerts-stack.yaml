@@ -11,30 +11,12 @@ Parameters:
   ProjectPrefix:
     Type: String
     Default: bio-lakehouse
-  AlertEmail:
+  AlertSnsTopicArn:
     Type: String
-    Description: Email address to receive health alert notifications
-    AllowedPattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    ConstraintDescription: Must be a valid email address
+    Description: ARN of the existing SNS topic for health alerts
+    Default: ''
 
 Resources:
-  # -------------------------------------------------------
-  # SNS Topic - Health Alerts
-  # -------------------------------------------------------
-  HealthAlertsTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      TopicName: !Sub '${ProjectPrefix}-health-alerts'
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectPrefix
-
-  HealthAlertsEmailSubscription:
-    Type: AWS::SNS::Subscription
-    Properties:
-      TopicArn: !Ref HealthAlertsTopic
-      Protocol: email
-      Endpoint: !Ref AlertEmail
 
   # -------------------------------------------------------
   # IAM Role - Health Alerts Lambda
@@ -88,7 +70,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - 'sns:Publish'
-                Resource: !Ref HealthAlertsTopic
+                Resource: !Ref AlertSnsTopicArn
       Tags:
         - Key: Project
           Value: !Ref ProjectPrefix
@@ -110,7 +92,7 @@ Resources:
         S3Key: lambda/health_alerts.zip
       Environment:
         Variables:
-          SNS_TOPIC_ARN: !Ref HealthAlertsTopic
+          SNS_TOPIC_ARN: !Ref AlertSnsTopicArn
           ATHENA_DATABASE: bio_gold
           ATHENA_RESULTS_BUCKET: !Sub '${ProjectPrefix}-athena-results-${AWS::AccountId}'
       Tags:
@@ -118,31 +100,60 @@ Resources:
           Value: !Ref ProjectPrefix
 
   # -------------------------------------------------------
-  # EventBridge Rule - Daily 3:00 AM UTC
+  # EventBridge Rule - Fire after Gold refresh succeeds
   # -------------------------------------------------------
-  DailyHealthAlertsRule:
+  GoldRefreshHealthAlertsRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: !Sub '${ProjectPrefix}-daily-health-alerts'
-      Description: Triggers health alerts Lambda daily at 3:00 AM UTC
-      ScheduleExpression: 'cron(0 3 * * ? *)'
+      Name: !Sub '${ProjectPrefix}-health-alerts-after-gold'
+      Description: Triggers health alerts after Gold layer refresh succeeds (freshest data)
+      EventPattern:
+        source: ["aws.glue"]
+        detail-type: ["Glue Job State Change"]
+        detail:
+          jobName:
+            - !Sub '${ProjectPrefix}-readiness-aggregator'
+            - !Sub '${ProjectPrefix}-dbt-gold-refresh'
+          state: ["SUCCEEDED"]
       State: ENABLED
       Targets:
         - Id: HealthAlertsLambdaTarget
           Arn: !GetAtt HealthAlertsFunction.Arn
 
-  HealthAlertsLambdaPermission:
+  GoldRefreshHealthAlertsPermission:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref HealthAlertsFunction
       Action: 'lambda:InvokeFunction'
       Principal: events.amazonaws.com
-      SourceArn: !GetAtt DailyHealthAlertsRule.Arn
+      SourceArn: !GetAtt GoldRefreshHealthAlertsRule.Arn
+
+  # -------------------------------------------------------
+  # EventBridge Rule - Fallback daily at 12:00 PM UTC (7 AM EST)
+  # -------------------------------------------------------
+  DailyHealthAlertsFallbackRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectPrefix}-daily-health-alerts-fallback'
+      Description: Fallback daily health alert in case pipeline did not run overnight
+      ScheduleExpression: 'cron(0 12 * * ? *)'
+      State: ENABLED
+      Targets:
+        - Id: HealthAlertsLambdaTarget
+          Arn: !GetAtt HealthAlertsFunction.Arn
+
+  DailyHealthAlertsFallbackPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref HealthAlertsFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailyHealthAlertsFallbackRule.Arn
 
 Outputs:
   HealthAlertsTopicArn:
     Description: SNS topic ARN for health alerts
-    Value: !Ref HealthAlertsTopic
+    Value: !Ref AlertSnsTopicArn
     Export:
       Name: !Sub '${ProjectPrefix}-health-alerts-topic'
 
