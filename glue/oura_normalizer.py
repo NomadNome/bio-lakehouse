@@ -80,12 +80,30 @@ DATA_TYPE_COLUMNS = {
 }
 
 
+def _detect_csv_delimiter(s3_path):
+    """Sample first line of first CSV under path; return ';' or ','."""
+    parts = s3_path.replace("s3://", "").split("/", 1)
+    bucket = parts[0]
+    prefix = parts[1] if len(parts) > 1 else ""
+    s3_client = boto3.client("s3")
+    resp = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=20)
+    for obj in resp.get("Contents", []):
+        if obj["Key"].endswith(".csv"):
+            head = s3_client.get_object(Bucket=bucket, Key=obj["Key"], Range="bytes=0-1024")
+            first_line = head["Body"].read().decode("utf-8").split("\n")[0]
+            return ";" if first_line.count(";") > first_line.count(",") else ","
+    return ","
+
+
 def read_bronze_csv(path):
     """Read CSV with partition discovery disabled to avoid column shadowing."""
+    delimiter = _detect_csv_delimiter(path)
+    print(f"Detected CSV delimiter for {path}: {delimiter!r}")
     return (
         spark.read
         .option("header", "true")
         .option("inferSchema", "false")
+        .option("sep", delimiter)
         .option("basePath", path)
         .option("recursiveFileLookup", "true")
         .option("pathGlobFilter", "*.csv")

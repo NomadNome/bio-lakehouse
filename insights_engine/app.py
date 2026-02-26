@@ -86,6 +86,16 @@ def get_engine():
     return NLToSQLEngine(athena)
 
 
+def csv_download(df, filename, label="Download CSV"):
+    """Render a download button for a DataFrame as CSV."""
+    st.download_button(
+        label=label,
+        data=df.to_csv(index=False),
+        file_name=filename,
+        mime="text/csv",
+    )
+
+
 # ── Sidebar ──────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("🧬 Bio Insights")
@@ -182,6 +192,12 @@ with st.sidebar:
         pass
 
     st.divider()
+    if st.button("🔄 Refresh Data"):
+        # Clear all Streamlit caches
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.rerun()
+
     st.toggle("Dark Mode", value=st.session_state.dark_mode, key="dark_mode_toggle",
               on_change=lambda: st.session_state.update(dark_mode=not st.session_state.dark_mode))
     st.caption("Data: Oura Ring + Peloton + Apple Health")
@@ -244,6 +260,7 @@ if page == "💬 Ask":
                         if not result.data.empty:
                             with st.expander(f"Show Data ({result.row_count} rows)"):
                                 st.dataframe(result.data, width="stretch")
+                                csv_download(result.data, "query_results.csv", "Download Results CSV")
 
                         # Metadata
                         cols = st.columns(3)
@@ -297,7 +314,7 @@ elif page == "📊 Insights":
     athena = get_athena()
 
     # Run analyzers with caching
-    @st.cache_resource(ttl=3600, show_spinner="Analyzing...")
+    @st.cache_resource(ttl=600, show_spinner="Analyzing...")
     def run_all_insights():
         from insights_engine.insights.sleep_readiness import SleepReadinessAnalyzer
         from insights_engine.insights.workout_recovery import WorkoutRecoveryAnalyzer
@@ -344,7 +361,7 @@ elif page == "📊 Insights":
     st.subheader("Apple Health — Vitals Trends")
     st.caption("Resting heart rate, HRV, and VO2 max from Apple Health (last 90 days).")
 
-    @st.cache_data(ttl=3600, show_spinner="Loading HealthKit vitals...")
+    @st.cache_data(ttl=600, show_spinner="Loading HealthKit vitals...")
     def load_hk_vitals():
         _athena = get_athena()
         return _athena.execute_query("""
@@ -425,6 +442,8 @@ elif page == "📊 Insights":
         )
         st.plotly_chart(fig, use_container_width=True)
 
+        csv_download(hk_vitals, "healthkit_vitals_90d.csv", "Download Vitals CSV")
+
         # HR vs Readiness correlation
         corr_data = hk_vitals.dropna(subset=["resting_heart_rate_bpm", "readiness_score"])
         if len(corr_data) >= 7:
@@ -436,7 +455,7 @@ elif page == "📊 Insights":
             )
 
         # ── Body Composition Dashboard (Hume Health pod baseline: Feb 19, 2026) ──
-        @st.cache_data(ttl=3600, show_spinner="Loading body composition...")
+        @st.cache_data(ttl=600, show_spinner="Loading body composition...")
         def load_body_comp():
             _athena = get_athena()
             return _athena.execute_query("""
@@ -590,6 +609,7 @@ elif page == "📊 Insights":
                 use_container_width=True,
                 hide_index=True,
             )
+            csv_download(body_data, "body_composition.csv", "Download Body Comp CSV")
 
         st.divider()
     else:
@@ -599,7 +619,7 @@ elif page == "📊 Insights":
     st.subheader("Sleep Debt Tracker")
     st.caption("Rolling sleep deficit relative to your 14-day baseline.")
 
-    @st.cache_data(ttl=3600, show_spinner="Loading sleep debt data...")
+    @st.cache_data(ttl=600, show_spinner="Loading sleep debt data...")
     def load_sleep_debt():
         _athena = get_athena()
         return _athena.execute_query("""
@@ -654,6 +674,8 @@ elif page == "📊 Insights":
             )
             st.plotly_chart(fig_sd, use_container_width=True)
 
+            csv_download(sleep_debt_df, "sleep_debt_60d.csv", "Download Sleep Debt CSV")
+
             # Current status
             latest = sleep_debt_df.iloc[-1]
             debt_val = latest["sleep_debt_7d"]
@@ -676,7 +698,7 @@ elif page == "📊 Insights":
     st.subheader("HRV Velocity")
     st.caption("2-day HRV change rate — rising/falling/stable flags for early recovery signals.")
 
-    @st.cache_data(ttl=3600, show_spinner="Loading HRV velocity data...")
+    @st.cache_data(ttl=600, show_spinner="Loading HRV velocity data...")
     def load_hrv_velocity():
         _athena = get_athena()
         return _athena.execute_query("""
@@ -725,6 +747,8 @@ elif page == "📊 Insights":
                 margin=dict(l=50, r=20, t=60, b=20),
             )
             st.plotly_chart(fig_hrv, use_container_width=True)
+
+            csv_download(hrv_vel_df, "hrv_velocity_60d.csv", "Download HRV Velocity CSV")
 
             # Flag summary
             recent_flags = hrv_vel_df.tail(7)["hrv_velocity_flag"]

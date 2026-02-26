@@ -36,7 +36,7 @@ class AthenaClient:
         self.client = boto3.client("athena", region_name=AWS_CONFIG["aws_region"])
         self._schema_cache: dict[str, list[Column]] | None = None
         self._query_cache: dict[str, tuple[pd.DataFrame, float]] = {}
-        self._cache_ttl_sec = 3600  # 1 hour
+        self._cache_ttl_sec = 600  # 10 minutes
 
     def execute_query(self, sql: str, timeout_sec: int = 30) -> pd.DataFrame:
         """Execute SQL against Athena, return DataFrame.

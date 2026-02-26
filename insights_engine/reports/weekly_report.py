@@ -123,9 +123,20 @@ class WeeklyReportGenerator:
         # Check data staleness
         staleness_warning = self._check_staleness()
 
+        # Get previous week's metrics for comparison
+        prev_week_end = week_start - timedelta(days=1)
+        prev_week_start = prev_week_end - timedelta(days=6)
+        prev_metrics = self._get_key_metrics(prev_week_start, prev_week_end)
+
+        # Get daily breakdown for pattern analysis
+        daily_data = self._get_daily_breakdown(week_start, week_ending)
+
         # Generate narrative via Claude
         print("Generating narrative via Claude...")
-        narrative = self._generate_narrative(insights, week_start, week_ending, key_metrics)
+        narrative = self._generate_narrative(
+            insights, week_start, week_ending, key_metrics,
+            prev_metrics=prev_metrics, daily_data=daily_data,
+        )
 
         # Render chart images as base64
         print("Rendering chart images...")
@@ -259,9 +270,40 @@ class WeeklyReportGenerator:
             print(f"  WARNING: Could not get key metrics: {e}")
             return []
 
+    def _get_daily_breakdown(self, week_start: date, week_end: date) -> str:
+        """Get day-by-day data for pattern analysis."""
+        sql = f"""
+        SELECT
+            date,
+            readiness_score,
+            sleep_score,
+            COALESCE(resting_heart_rate_bpm, 0) AS resting_hr,
+            COALESCE(hrv_ms, 0) AS hrv,
+            had_workout,
+            disciplines,
+            COALESCE(total_output_kj, 0) AS output_kj,
+            COALESCE(workout_count, 0) AS num_workouts
+        FROM bio_gold.daily_readiness_performance
+        WHERE COALESCE(
+                TRY(CAST(date AS date)),
+                TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
+              ) BETWEEN DATE '{week_start}' AND DATE '{week_end}'
+        ORDER BY date
+        """
+        try:
+            df = self.athena.execute_query(sql)
+            if df.empty:
+                return "No daily data available."
+            return df.to_string(index=False)
+        except Exception as e:
+            print(f"  WARNING: Could not get daily breakdown: {e}")
+            return "Daily breakdown unavailable."
+
     def _generate_narrative(
         self, insights: list[InsightResult], week_start: date, week_end: date,
         key_metrics: list[dict] | None = None,
+        prev_metrics: list[dict] | None = None,
+        daily_data: str | None = None,
     ) -> str:
         """Use Claude to generate a cohesive weekly narrative."""
         system_prompt = (PROMPTS_DIR / "insight_narrator.txt").read_text()
@@ -280,20 +322,29 @@ class WeeklyReportGenerator:
         metrics_block = ""
         if key_metrics:
             metrics_lines = [f"- {m['label']}: {m['value']}" for m in key_metrics]
-            metrics_block = "\n### Key Metrics (This Week)\n" + "\n".join(metrics_lines) + "\n"
+            metrics_block = "\n### This Week's Metrics\n" + "\n".join(metrics_lines) + "\n"
+
+        prev_block = ""
+        if prev_metrics:
+            prev_lines = [f"- {m['label']}: {m['value']}" for m in prev_metrics]
+            prev_block = "\n### Previous Week's Metrics (for comparison)\n" + "\n".join(prev_lines) + "\n"
+
+        daily_block = ""
+        if daily_data:
+            daily_block = f"\n### Day-by-Day Breakdown\n```\n{daily_data}\n```\n"
 
         user_prompt = f"""Generate the weekly bio-optimization report for {week_start} to {week_end}.
-{metrics_block}
+{metrics_block}{prev_block}{daily_block}
 Here are the analysis results from each insight module:
 
 {"".join(insight_summaries)}
 
-Write the full report narrative following the structure in your instructions."""
+Write the report following the structure in your instructions. Focus on what CHANGED this week vs last week and what's actionable."""
 
         response = self.client.messages.create(
             model=self.model,
             max_tokens=2048,
-            temperature=0.3,
+            temperature=0.4,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )

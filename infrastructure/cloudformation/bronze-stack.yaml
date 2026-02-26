@@ -127,7 +127,13 @@ Resources:
                 Action:
                   - 'dynamodb:PutItem'
                   - 'dynamodb:UpdateItem'
+                  - 'dynamodb:Query'
                 Resource: !GetAtt IngestionLogTable.Arn
+              - Sid: SNSPublishAlerts
+                Effect: Allow
+                Action:
+                  - 'sns:Publish'
+                Resource: !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${ProjectPrefix}-health-alerts'
               - Sid: GlueStartJob
                 Effect: Allow
                 Action:
@@ -157,6 +163,7 @@ Resources:
           OURA_GLUE_JOB: !Sub '${ProjectPrefix}-oura-normalizer'
           PELOTON_GLUE_JOB: !Sub '${ProjectPrefix}-peloton-normalizer'
           HEALTHKIT_GLUE_JOB: !Sub '${ProjectPrefix}-healthkit-normalizer'
+          ALERT_SNS_TOPIC_ARN: !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${ProjectPrefix}-health-alerts'
       Code:
         ZipFile: |
           # Inline stub - deploy full handler via aws lambda update-function-code

@@ -168,7 +168,22 @@ class NLToSQLEngine:
                 error=f"Translation error: {e}",
             )
 
-        # Step 2: Execute SQL
+        # Step 2: Validate and execute SQL
+        sql_stripped = nl_result.sql.strip().lstrip("(").upper()
+        if not sql_stripped.startswith(("SELECT", "WITH")):
+            return AnswerResult(
+                question=question,
+                sql=nl_result.sql,
+                explanation=nl_result.explanation,
+                assumptions=nl_result.assumptions,
+                confidence=nl_result.confidence,
+                data=pd.DataFrame(),
+                answer="",
+                execution_time_ms=int((time.time() - start_time) * 1000),
+                row_count=0,
+                error="Only SELECT queries are allowed. Please rephrase your question.",
+            )
+
         try:
             df = self.athena.execute_query(nl_result.sql, timeout_sec=30)
         except Exception as e:

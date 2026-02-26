@@ -79,6 +79,9 @@ if df.rdd.isEmpty():
 # Normalize column names: "Workout Timestamp" → "workout_timestamp"
 # Raw Peloton CSVs use title case; previously processed ones are already snake_case
 import re
+# SYNC: This normalization regex must match in both:
+#   - lambda/ingestion_trigger/handler.py:validate_csv_headers()
+#   - glue/peloton_normalizer.py (column normalization block)
 for col in df.columns:
     snake = re.sub(r"[.\s/()]+", "_", col.strip()).lower().strip("_")
     if snake != col:
@@ -93,14 +96,17 @@ validate_schema(
 
 # Parse workout_timestamp into workout_date and workout_time.
 # Raw format: "2026-02-21 07:25 (-05)" or "2026-02-21 07:25 (EST)"
-# Extract date (first 10 chars) and time (chars 11-16)
+# Use regex extraction to handle variable whitespace and optional seconds.
 df = df.withColumn(
     "workout_date",
-    F.to_timestamp(F.substring(F.col("workout_timestamp"), 1, 10), "yyyy-MM-dd"),
+    F.to_timestamp(
+        F.regexp_extract("workout_timestamp", r"^(\d{4}-\d{2}-\d{2})", 1),
+        "yyyy-MM-dd",
+    ),
 )
 df = df.withColumn(
     "workout_time",
-    F.trim(F.substring(F.col("workout_timestamp"), 12, 5)),
+    F.regexp_extract("workout_timestamp", r"\d{4}-\d{2}-\d{2}\s+(\d{2}:\d{2}(?::\d{2})?)", 1),
 )
 print(f"Sample workout_date: {df.select('workout_date').first()[0]}")
 
