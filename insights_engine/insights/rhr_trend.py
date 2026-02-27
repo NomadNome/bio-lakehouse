@@ -23,7 +23,7 @@ class RHRTrendAnalyzer(InsightAnalyzer):
     def analyze(self, date_range: DateRange | None = None) -> InsightResult:
         sql = """
         SELECT date, resting_heart_rate_bpm, readiness_score
-        FROM bio_gold_gold.gold_daily_rollup
+        FROM bio_gold.daily_readiness_performance
         WHERE resting_heart_rate_bpm IS NOT NULL
         ORDER BY date
         """

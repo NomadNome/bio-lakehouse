@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Bio-Optimization Data Lakehouse - Health Alerts
-  SNS topic, Lambda function, and EventBridge daily schedule for health alerts.
+  Bio-Optimization Data Lakehouse - Morning Briefing
+  Lambda function, EventBridge daily schedule (7 AM EST), and SNS topic
+  for a concise morning health summary email.
 
 Parameters:
   Environment:
@@ -11,20 +12,42 @@ Parameters:
   ProjectPrefix:
     Type: String
     Default: bio-lakehouse
-  AlertSnsTopicArn:
+  NotificationEmail:
     Type: String
-    Description: ARN of the existing SNS topic for health alerts
+    Description: Email address for morning briefing delivery
     Default: ''
+
+Conditions:
+  HasEmail: !Not [!Equals [!Ref NotificationEmail, '']]
 
 Resources:
 
   # -------------------------------------------------------
-  # IAM Role - Health Alerts Lambda
+  # SNS Topic - Morning Briefing
   # -------------------------------------------------------
-  HealthAlertsLambdaRole:
+  MorningBriefingTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectPrefix}-morning-briefing'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectPrefix
+
+  MorningBriefingSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasEmail
+    Properties:
+      TopicArn: !Ref MorningBriefingTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  # -------------------------------------------------------
+  # IAM Role - Morning Briefing Lambda
+  # -------------------------------------------------------
+  MorningBriefingLambdaRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${ProjectPrefix}-health-alerts-role'
+      RoleName: !Sub '${ProjectPrefix}-morning-briefing-role'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -35,7 +58,7 @@ Resources:
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
       Policies:
-        - PolicyName: !Sub '${ProjectPrefix}-health-alerts-policy'
+        - PolicyName: !Sub '${ProjectPrefix}-morning-briefing-policy'
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -70,29 +93,29 @@ Resources:
               - Effect: Allow
                 Action:
                   - 'sns:Publish'
-                Resource: !Ref AlertSnsTopicArn
+                Resource: !Ref MorningBriefingTopic
       Tags:
         - Key: Project
           Value: !Ref ProjectPrefix
 
   # -------------------------------------------------------
-  # Lambda Function - Health Alerts
+  # Lambda Function - Morning Briefing
   # -------------------------------------------------------
-  HealthAlertsFunction:
+  MorningBriefingFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${ProjectPrefix}-health-alerts'
+      FunctionName: !Sub '${ProjectPrefix}-morning-briefing'
       Runtime: python3.11
       Handler: handler.lambda_handler
-      Role: !GetAtt HealthAlertsLambdaRole.Arn
+      Role: !GetAtt MorningBriefingLambdaRole.Arn
       Timeout: 120
       MemorySize: 256
       Code:
         S3Bucket: !Sub '${ProjectPrefix}-gold-${AWS::AccountId}'
-        S3Key: lambda/health_alerts.zip
+        S3Key: lambda/morning_briefing.zip
       Environment:
         Variables:
-          SNS_TOPIC_ARN: !Ref AlertSnsTopicArn
+          SNS_TOPIC_ARN: !Ref MorningBriefingTopic
           ATHENA_DATABASE: bio_gold
           ATHENA_RESULTS_BUCKET: !Sub '${ProjectPrefix}-athena-results-${AWS::AccountId}'
       Tags:
@@ -100,62 +123,34 @@ Resources:
           Value: !Ref ProjectPrefix
 
   # -------------------------------------------------------
-  # EventBridge Rule - Fire after Gold refresh succeeds
+  # EventBridge Rule - Daily at 7:00 AM EST (12:00 UTC)
   # -------------------------------------------------------
-  GoldRefreshHealthAlertsRule:
+  DailyMorningBriefingRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: !Sub '${ProjectPrefix}-health-alerts-after-gold'
-      Description: Triggers health alerts after Gold layer refresh succeeds (freshest data)
-      EventPattern:
-        source: ["aws.glue"]
-        detail-type: ["Glue Job State Change"]
-        detail:
-          jobName:
-            - !Sub '${ProjectPrefix}-dbt-gold-refresh'
-          state: ["SUCCEEDED"]
-      State: ENABLED
-      Targets:
-        - Id: HealthAlertsLambdaTarget
-          Arn: !GetAtt HealthAlertsFunction.Arn
-
-  GoldRefreshHealthAlertsPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref HealthAlertsFunction
-      Action: 'lambda:InvokeFunction'
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt GoldRefreshHealthAlertsRule.Arn
-
-  # -------------------------------------------------------
-  # EventBridge Rule - Fallback daily at 12:00 PM UTC (7 AM EST)
-  # -------------------------------------------------------
-  DailyHealthAlertsFallbackRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub '${ProjectPrefix}-daily-health-alerts-fallback'
-      Description: Fallback daily health alert in case pipeline did not run overnight
+      Name: !Sub '${ProjectPrefix}-daily-morning-briefing'
+      Description: Daily morning briefing at 7 AM EST
       ScheduleExpression: 'cron(0 12 * * ? *)'
       State: ENABLED
       Targets:
-        - Id: HealthAlertsLambdaTarget
-          Arn: !GetAtt HealthAlertsFunction.Arn
+        - Id: MorningBriefingLambdaTarget
+          Arn: !GetAtt MorningBriefingFunction.Arn
 
-  DailyHealthAlertsFallbackPermission:
+  DailyMorningBriefingPermission:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref HealthAlertsFunction
+      FunctionName: !Ref MorningBriefingFunction
       Action: 'lambda:InvokeFunction'
       Principal: events.amazonaws.com
-      SourceArn: !GetAtt DailyHealthAlertsFallbackRule.Arn
+      SourceArn: !GetAtt DailyMorningBriefingRule.Arn
 
 Outputs:
-  HealthAlertsTopicArn:
-    Description: SNS topic ARN for health alerts
-    Value: !Ref AlertSnsTopicArn
+  MorningBriefingTopicArn:
+    Description: SNS topic ARN for morning briefing
+    Value: !Ref MorningBriefingTopic
     Export:
-      Name: !Sub '${ProjectPrefix}-health-alerts-topic'
+      Name: !Sub '${ProjectPrefix}-morning-briefing-topic'
 
-  HealthAlertsLambdaArn:
-    Description: Health alerts Lambda function ARN
-    Value: !GetAtt HealthAlertsFunction.Arn
+  MorningBriefingLambdaArn:
+    Description: Morning briefing Lambda function ARN
+    Value: !GetAtt MorningBriefingFunction.Arn

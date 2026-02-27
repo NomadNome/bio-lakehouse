@@ -302,7 +302,7 @@ class WeeklyReportGenerator:
             temperature_deviation AS temp_dev,
             deep_sleep_score,
             rem_sleep_score
-        FROM bio_gold_gold.gold_daily_rollup
+        FROM bio_gold.daily_readiness_performance
         WHERE CAST(date AS date) BETWEEN DATE '{week_start}' AND DATE '{week_end}'
         ORDER BY date
         """

@@ -40,7 +40,7 @@ class RecoveryWindowAnalyzer(InsightAnalyzer):
             readiness_delta_d2,
             readiness_delta_d3,
             days_to_recover
-        FROM bio_gold_gold.workout_recovery_windows
+        FROM bio_gold.workout_recovery_windows
         ORDER BY workout_date
         """
         df = self.athena.execute_query(sql)

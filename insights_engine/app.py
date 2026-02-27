@@ -628,7 +628,7 @@ elif page == "📊 Insights":
         _athena = get_athena()
         return _athena.execute_query("""
             SELECT date, sleep_score, sleep_baseline_14d, sleep_deficit_daily, sleep_debt_7d
-            FROM bio_gold_gold.feature_readiness_daily
+            FROM bio_gold.feature_readiness_daily
             WHERE sleep_baseline_14d IS NOT NULL
             ORDER BY date
         """)
@@ -707,7 +707,7 @@ elif page == "📊 Insights":
         _athena = get_athena()
         return _athena.execute_query("""
             SELECT date, hrv_ms, hrv_2day_change, hrv_velocity_flag
-            FROM bio_gold_gold.feature_readiness_daily
+            FROM bio_gold.feature_readiness_daily
             WHERE hrv_2day_change IS NOT NULL
             ORDER BY date
         """)

@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Bio-Optimization Data Lakehouse - Gold Layer
-  S3 bucket, Glue database, readiness aggregator ETL, EventBridge schedule
+  S3 bucket, Glue database, dbt Gold refresh job, FHIR builder, crawler
 
 Parameters:
   Environment:
@@ -47,36 +47,6 @@ Resources:
       DatabaseInput:
         Name: bio_gold
         Description: Gold layer - aggregated analytics and dashboard-ready datasets
-
-  # -------------------------------------------------------
-  # Glue ETL Job - Readiness Aggregator
-  # -------------------------------------------------------
-  ReadinessAggregatorJob:
-    Type: AWS::Glue::Job
-    Properties:
-      Name: !Sub '${ProjectPrefix}-readiness-aggregator'
-      Role: !ImportValue
-        Fn::Sub: '${ProjectPrefix}-glue-role-arn'
-      GlueVersion: '4.0'
-      WorkerType: G.1X
-      NumberOfWorkers: 2
-      Timeout: 30
-      Command:
-        Name: glueetl
-        ScriptLocation: !Sub
-          - 's3://${SilverBucket}/scripts/readiness_aggregator.py'
-          - SilverBucket: !ImportValue
-              Fn::Sub: '${ProjectPrefix}-silver-bucket'
-        PythonVersion: '3'
-      DefaultArguments:
-        '--silver_bucket': !ImportValue
-          Fn::Sub: '${ProjectPrefix}-silver-bucket'
-        '--gold_bucket': !Ref GoldBucket
-        '--enable-metrics': 'true'
-        '--enable-continuous-cloudwatch-log': 'true'
-        '--job-language': python
-      Tags:
-        Project: !Ref ProjectPrefix
 
   # -------------------------------------------------------
   # Glue ETL Job - FHIR Observation Builder
@@ -138,28 +108,13 @@ Resources:
       DatabaseName: !Ref GoldDatabase
       Targets:
         S3Targets:
-          - Path: !Sub 's3://${GoldBucket}/daily_readiness_performance/'
+          - Path: !Sub 's3://${GoldBucket}/dbt/daily_readiness_performance/'
           - Path: !Sub 's3://${GoldBucket}/fhir_observations/'
       SchemaChangePolicy:
         UpdateBehavior: UPDATE_IN_DATABASE
         DeleteBehavior: LOG
       Tags:
         Project: !Ref ProjectPrefix
-
-  # -------------------------------------------------------
-  # Glue Trigger - Daily 2AM UTC schedule
-  # DISABLED: Replaced by dbt build (Phase 6). Trigger remains
-  # in stack but StartOnCreation set to false.
-  # -------------------------------------------------------
-  DailyAggregatorTrigger:
-    Type: AWS::Glue::Trigger
-    Properties:
-      Name: !Sub '${ProjectPrefix}-daily-aggregator-trigger'
-      Type: SCHEDULED
-      Schedule: 'cron(0 2 * * ? *)'
-      StartOnCreation: false
-      Actions:
-        - JobName: !Ref ReadinessAggregatorJob
 
   # -------------------------------------------------------
   # Glue Job - dbt Gold Refresh (Python Shell)

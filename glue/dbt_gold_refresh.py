@@ -32,7 +32,7 @@ def get_args(argv, keys):
 args = get_args(sys.argv, ["gold_bucket", "athena_results_bucket"])
 GOLD_BUCKET = args.get("gold_bucket", "bio-lakehouse-gold-069899605581")
 ATHENA_RESULTS = f"s3://{args.get('athena_results_bucket', 'bio-lakehouse-athena-results-069899605581')}/"
-DATABASE = "bio_gold_gold"
+DATABASE = "bio_gold"
 
 athena = boto3.client("athena")
 s3 = boto3.client("s3")
@@ -209,7 +209,7 @@ WITH base AS (
         total_output_kj, peloton_calories, total_workout_minutes, max_avg_hr,
         had_workout, hk_calories, hk_workout_minutes, resting_heart_rate_bpm,
         hrv_ms, combined_wellness_score, workout_count, hk_workout_count
-    FROM bio_gold_gold."gold_daily_rollup"
+    FROM bio_gold."gold_daily_rollup"
     WHERE date IS NOT NULL
 ),
 with_tss AS (
@@ -284,7 +284,7 @@ WITH daily AS (
         LEAD(sleep_score, 2) OVER (ORDER BY date) AS sleep_d2,
         LAG(readiness_score, 1) OVER (ORDER BY date) AS readiness_prev,
         AVG(readiness_score) OVER (ORDER BY date ROWS BETWEEN 7 PRECEDING AND 1 PRECEDING) AS readiness_7d_baseline
-    FROM bio_gold_gold."gold_daily_rollup"
+    FROM bio_gold."gold_daily_rollup"
     WHERE date IS NOT NULL
 ),
 workout_days AS (

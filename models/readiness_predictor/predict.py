@@ -67,7 +67,7 @@ def load_latest_features() -> pd.DataFrame:
     athena = AthenaClient()
     df = athena.execute_query("""
         SELECT *
-        FROM bio_gold_gold.feature_readiness_daily
+        FROM bio_gold.feature_readiness_daily
         ORDER BY date DESC
         LIMIT 1
     """)
