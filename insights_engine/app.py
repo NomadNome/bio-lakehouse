@@ -325,8 +325,6 @@ elif page == "📊 Insights":
         from insights_engine.insights.recovery_windows import RecoveryWindowAnalyzer
         from insights_engine.insights.temperature_trend import TemperatureTrendAnalyzer
         from insights_engine.insights.sleep_architecture import SleepArchitectureAnalyzer
-        from insights_engine.insights.hrv_trend import HRVTrendAnalyzer
-        from insights_engine.insights.rhr_trend import RHRTrendAnalyzer
 
         _athena = get_athena()
         results = []
@@ -335,8 +333,6 @@ elif page == "📊 Insights":
             WorkoutRecoveryAnalyzer,
             RecoveryWindowAnalyzer,
             ReadinessTrendAnalyzer,
-            HRVTrendAnalyzer,
-            RHRTrendAnalyzer,
             TemperatureTrendAnalyzer,
             SleepArchitectureAnalyzer,
             AnomalyDetectionAnalyzer,
