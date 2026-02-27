@@ -27,6 +27,10 @@ from insights_engine.insights.workout_recovery import WorkoutRecoveryAnalyzer
 from insights_engine.insights.readiness_trend import ReadinessTrendAnalyzer
 from insights_engine.insights.anomaly_detection import AnomalyDetectionAnalyzer
 from insights_engine.insights.timing_correlation import TimingCorrelationAnalyzer
+from insights_engine.insights.hrv_trend import HRVTrendAnalyzer
+from insights_engine.insights.rhr_trend import RHRTrendAnalyzer
+from insights_engine.insights.temperature_trend import TemperatureTrendAnalyzer
+from insights_engine.insights.sleep_architecture import SleepArchitectureAnalyzer
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
@@ -37,6 +41,10 @@ INSIGHT_ICONS = {
     "readiness_trend": "📈",
     "anomaly_detection": "⚠️",
     "timing_correlation": "⏱️",
+    "hrv_trend": "💓",
+    "rhr_trend": "❤️",
+    "temperature_trend": "🌡️",
+    "sleep_architecture": "🧠",
 }
 
 INSIGHT_COLORS = {
@@ -45,6 +53,10 @@ INSIGHT_COLORS = {
     "readiness_trend": "#14B8A6",
     "anomaly_detection": "#F59E0B",
     "timing_correlation": "#22C55E",
+    "hrv_trend": "#8B5CF6",
+    "rhr_trend": "#EF4444",
+    "temperature_trend": "#F97316",
+    "sleep_architecture": "#3B82F6",
 }
 
 
@@ -88,6 +100,10 @@ class WeeklyReportGenerator:
             SleepReadinessAnalyzer(athena),
             WorkoutRecoveryAnalyzer(athena),
             ReadinessTrendAnalyzer(athena),
+            HRVTrendAnalyzer(athena),
+            RHRTrendAnalyzer(athena),
+            TemperatureTrendAnalyzer(athena),
+            SleepArchitectureAnalyzer(athena),
             AnomalyDetectionAnalyzer(athena),
             TimingCorrelationAnalyzer(athena),
         ]
@@ -282,12 +298,12 @@ class WeeklyReportGenerator:
             had_workout,
             disciplines,
             COALESCE(total_output_kj, 0) AS output_kj,
-            COALESCE(workout_count, 0) AS num_workouts
-        FROM bio_gold.daily_readiness_performance
-        WHERE COALESCE(
-                TRY(CAST(date AS date)),
-                TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
-              ) BETWEEN DATE '{week_start}' AND DATE '{week_end}'
+            COALESCE(workout_count, 0) AS num_workouts,
+            temperature_deviation AS temp_dev,
+            deep_sleep_score,
+            rem_sleep_score
+        FROM bio_gold_gold.gold_daily_rollup
+        WHERE CAST(date AS date) BETWEEN DATE '{week_start}' AND DATE '{week_end}'
         ORDER BY date
         """
         try:

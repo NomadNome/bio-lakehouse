@@ -122,15 +122,6 @@ class HRVTrendAnalyzer(InsightAnalyzer):
 
         fig = go.Figure()
 
-        # Daily HRV scatter (faint)
-        fig.add_trace(go.Scatter(
-            x=df["date"], y=df["hrv_ms"],
-            mode="markers",
-            marker=dict(color=theme.PRIMARY, size=3, opacity=0.25),
-            name="Daily HRV",
-            showlegend=False,
-        ))
-
         # 7-day rolling avg
         fig.add_trace(go.Scatter(
             x=df["date"], y=df["hrv_7d"],
@@ -144,7 +135,7 @@ class HRVTrendAnalyzer(InsightAnalyzer):
             x=df["date"], y=df["hrv_30d"],
             mode="lines",
             line=dict(color=theme.ACCENT, width=2, dash="dash"),
-            name="30-day avg",
+            name="30-day baseline",
         ))
 
         theme.style_figure(
