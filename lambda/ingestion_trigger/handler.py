@@ -29,9 +29,29 @@ SNS_TOPIC_ARN = os.environ.get("ALERT_SNS_TOPIC_ARN", "")
 
 # Expected headers for validation
 EXPECTED_HEADERS = {
-    "oura/readiness": ["id", "day", "score", "timestamp"],
-    "oura/sleep": ["id", "day", "score", "timestamp"],
-    "oura/activity": ["id", "day", "score", "timestamp", "active_calories", "steps"],
+    "oura/readiness": [
+        "id", "day", "score", "timestamp",
+        "temperature_deviation", "temperature_trend_deviation",
+        "contributors_activity_balance", "contributors_body_temperature",
+        "contributors_hrv_balance", "contributors_previous_day_activity",
+        "contributors_previous_night", "contributors_recovery_index",
+        "contributors_resting_heart_rate", "contributors_sleep_balance",
+        "contributors_sleep_regularity",
+    ],
+    "oura/sleep": [
+        "id", "day", "score", "timestamp",
+        "contributors_deep_sleep", "contributors_efficiency",
+        "contributors_latency", "contributors_rem_sleep",
+        "contributors_restfulness", "contributors_timing",
+        "contributors_total_sleep",
+    ],
+    "oura/activity": [
+        "id", "day", "score", "timestamp",
+        "active_calories", "steps",
+        "high_activity_time", "medium_activity_time",
+        "low_activity_time", "sedentary_time", "total_calories",
+        "met_interval", "met_avg", "met_max", "met_count",
+    ],
     "oura/workout": ["id", "activity", "calories", "day"],
     "peloton/workouts": [
         "workout_timestamp",

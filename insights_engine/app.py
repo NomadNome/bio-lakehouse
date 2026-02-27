@@ -323,6 +323,8 @@ elif page == "📊 Insights":
         from insights_engine.insights.timing_correlation import TimingCorrelationAnalyzer
         from insights_engine.insights.training_load import TrainingLoadAnalyzer
         from insights_engine.insights.recovery_windows import RecoveryWindowAnalyzer
+        from insights_engine.insights.temperature_trend import TemperatureTrendAnalyzer
+        from insights_engine.insights.sleep_architecture import SleepArchitectureAnalyzer
 
         _athena = get_athena()
         results = []
@@ -331,6 +333,8 @@ elif page == "📊 Insights":
             WorkoutRecoveryAnalyzer,
             RecoveryWindowAnalyzer,
             ReadinessTrendAnalyzer,
+            TemperatureTrendAnalyzer,
+            SleepArchitectureAnalyzer,
             AnomalyDetectionAnalyzer,
             TimingCorrelationAnalyzer,
             TrainingLoadAnalyzer,
