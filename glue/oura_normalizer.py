@@ -96,19 +96,56 @@ def _detect_csv_delimiter(s3_path):
 
 
 def read_bronze_csv(path):
-    """Read CSV with partition discovery disabled to avoid column shadowing."""
+    """Read CSV files, grouping by header signature to handle mixed column orders.
+
+    Bronze CSVs have two column orders: bulk-uploaded (alphabetical) and
+    Lambda-produced (id,day,score,...). Spark CSV reader maps columns by
+    position, not name, so reading mixed-order files together misaligns
+    values. We group files by header, read each group in one Spark pass,
+    and unionByName to merge correctly.
+    """
     delimiter = _detect_csv_delimiter(path)
     print(f"Detected CSV delimiter for {path}: {delimiter!r}")
-    return (
-        spark.read
-        .option("header", "true")
-        .option("inferSchema", "false")
-        .option("sep", delimiter)
-        .option("basePath", path)
-        .option("recursiveFileLookup", "true")
-        .option("pathGlobFilter", "*.csv")
-        .csv(path)
-    )
+
+    parts = path.replace("s3://", "").split("/", 1)
+    bucket = parts[0]
+    prefix = parts[1] if len(parts) > 1 else ""
+    s3_client = boto3.client("s3")
+    paginator = s3_client.get_paginator("list_objects_v2")
+
+    # Group CSV files by their header line
+    header_groups = {}
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if not key.endswith(".csv") or obj["Size"] == 0:
+                continue
+            head = s3_client.get_object(Bucket=bucket, Key=key, Range="bytes=0-1024")
+            header_line = head["Body"].read().decode("utf-8").split("\n")[0].strip()
+            header_groups.setdefault(header_line, []).append(f"s3://{bucket}/{key}")
+
+    if not header_groups:
+        return spark.createDataFrame([], StructType([]))
+
+    print(f"Found {len(header_groups)} distinct CSV header layouts, "
+          f"{sum(len(v) for v in header_groups.values())} files total")
+
+    # Read each group (same column order) in one Spark pass, then union by name
+    dfs = []
+    for file_paths in header_groups.values():
+        df = (
+            spark.read
+            .option("header", "true")
+            .option("inferSchema", "false")
+            .option("sep", delimiter)
+            .csv(file_paths)
+        )
+        dfs.append(df)
+
+    result = dfs[0]
+    for df in dfs[1:]:
+        result = result.unionByName(df, allowMissingColumns=True)
+    return result
 
 
 def _flatten_json_record(record, data_type):
@@ -192,7 +229,8 @@ def read_bronze(path, data_type):
         csv_df = read_bronze_csv(path)
         if csv_df.rdd.isEmpty():
             csv_df = None
-    except Exception:
+    except Exception as e:
+        print(f"CSV read failed for {path}: {e}")
         csv_df = None
 
     try:
@@ -202,7 +240,7 @@ def read_bronze(path, data_type):
     except Exception:
         json_df = None
 
-    # Filter CSV rows with invalid day values (caused by mixed column orders across CSV files)
+    # Filter CSV rows with invalid day values (caused by test files or corrupt records)
     if csv_df is not None and "day" in csv_df.columns:
         csv_df = csv_df.filter(F.col("day").rlike("^\\d{4}-\\d{2}-\\d{2}"))
         if csv_df.rdd.isEmpty():

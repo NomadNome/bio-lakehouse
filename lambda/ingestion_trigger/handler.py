@@ -118,7 +118,7 @@ def log_ingestion(file_path: str, metadata: dict) -> None:
     table.put_item(
         Item={
             "file_path": file_path,
-            "upload_timestamp": str(int(datetime.now(timezone.utc).timestamp())),
+            "upload_timestamp": int(datetime.now(timezone.utc).timestamp()),
             "source": metadata.get("source", "unknown"),
             "validation": metadata.get("validation", {}),
             "file_size": metadata.get("file_size", 0),
@@ -142,7 +142,7 @@ def get_job_name(source):
 def is_recently_processed(file_path, cooldown_seconds=300):
     """Check if this file was already processed within the cooldown window."""
     table = dynamodb.Table(INGESTION_LOG_TABLE)
-    cutoff = str(int((datetime.now(timezone.utc) - timedelta(seconds=cooldown_seconds)).timestamp()))
+    cutoff = int((datetime.now(timezone.utc) - timedelta(seconds=cooldown_seconds)).timestamp())
     resp = table.query(
         KeyConditionExpression="file_path = :fp AND upload_timestamp > :ts",
         ExpressionAttributeValues={":fp": file_path, ":ts": cutoff},
