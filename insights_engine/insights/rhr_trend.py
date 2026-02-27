@@ -8,6 +8,8 @@ before subjective symptoms, making it a useful early-warning signal.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -134,11 +136,15 @@ class RHRTrendAnalyzer(InsightAnalyzer):
         df = result.data
         s = result.statistics
 
+        # Show last 365 days for consistency with other charts
+        cutoff = pd.Timestamp(datetime.now() - timedelta(days=365))
+        plot_df = df[df["date"] >= cutoff]
+
         fig = go.Figure()
 
         # 7-day rolling avg
         fig.add_trace(go.Scatter(
-            x=df["date"], y=df["rhr_7d"],
+            x=plot_df["date"], y=plot_df["rhr_7d"],
             mode="lines",
             line=dict(color=theme.SECONDARY, width=3),
             name="7-day avg",
@@ -146,7 +152,7 @@ class RHRTrendAnalyzer(InsightAnalyzer):
 
         # 30-day rolling avg
         fig.add_trace(go.Scatter(
-            x=df["date"], y=df["rhr_30d"],
+            x=plot_df["date"], y=plot_df["rhr_30d"],
             mode="lines",
             line=dict(color=theme.ACCENT, width=2, dash="dash"),
             name="30-day baseline",

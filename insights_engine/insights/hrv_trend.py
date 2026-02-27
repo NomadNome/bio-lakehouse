@@ -9,6 +9,8 @@ with readiness scores.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -120,11 +122,15 @@ class HRVTrendAnalyzer(InsightAnalyzer):
         df = result.data
         s = result.statistics
 
+        # Show last 365 days for consistency with other charts
+        cutoff = pd.Timestamp(datetime.now() - timedelta(days=365))
+        plot_df = df[df["date"] >= cutoff]
+
         fig = go.Figure()
 
         # 7-day rolling avg
         fig.add_trace(go.Scatter(
-            x=df["date"], y=df["hrv_7d"],
+            x=plot_df["date"], y=plot_df["hrv_7d"],
             mode="lines",
             line=dict(color=theme.PRIMARY, width=3),
             name="7-day avg",
@@ -132,7 +138,7 @@ class HRVTrendAnalyzer(InsightAnalyzer):
 
         # 30-day rolling avg
         fig.add_trace(go.Scatter(
-            x=df["date"], y=df["hrv_30d"],
+            x=plot_df["date"], y=plot_df["hrv_30d"],
             mode="lines",
             line=dict(color=theme.ACCENT, width=2, dash="dash"),
             name="30-day baseline",
