@@ -8,12 +8,9 @@ cycle phase. Provides early-warning flags and correlates with readiness.
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
-from insights_engine.core.athena_client import AthenaClient
 from insights_engine.insights.base import DateRange, InsightAnalyzer, InsightResult
 from insights_engine.viz import theme
 
@@ -24,8 +21,7 @@ class TemperatureTrendAnalyzer(InsightAnalyzer):
     def analyze(self, date_range: DateRange | None = None) -> InsightResult:
         sql = """
         SELECT day, temp_deviation, temp_trend_deviation,
-               body_temp_score, temp_dev_7day_avg, temp_status,
-               readiness_score
+               temp_dev_7day_avg, temp_status, readiness_score
         FROM bio_gold.temperature_trends
         ORDER BY day
         """
@@ -41,7 +37,7 @@ class TemperatureTrendAnalyzer(InsightAnalyzer):
         df = df.sort_values("day").reset_index(drop=True)
 
         for col in ["temp_deviation", "temp_trend_deviation", "temp_dev_7day_avg",
-                     "readiness_score", "body_temp_score"]:
+                     "readiness_score"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
         temp = df["temp_deviation"].dropna()
@@ -120,13 +116,7 @@ class TemperatureTrendAnalyzer(InsightAnalyzer):
         df = result.data
         s = result.statistics
 
-        fig = make_subplots(
-            rows=2, cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.08,
-            subplot_titles=("Temperature Deviation (C)", "Body Temperature Score"),
-            row_heights=[0.6, 0.4],
-        )
+        fig = go.Figure()
 
         # Temperature deviation bars colored by status
         colors = []
@@ -143,7 +133,7 @@ class TemperatureTrendAnalyzer(InsightAnalyzer):
             marker_color=colors,
             name="Temp Deviation",
             opacity=0.7,
-        ), row=1, col=1)
+        ))
 
         # 7-day moving average line
         fig.add_trace(go.Scatter(
@@ -151,29 +141,22 @@ class TemperatureTrendAnalyzer(InsightAnalyzer):
             mode="lines",
             line=dict(color=theme.ACCENT, width=2.5),
             name="7-day avg",
-        ), row=1, col=1)
+        ))
 
         # Threshold lines
-        fig.add_hline(y=0.3, row=1, col=1, line_dash="dot",
+        fig.add_hline(y=0.3, line_dash="dot",
+                       line_color=theme.WARNING, opacity=0.5,
+                       annotation_text="+0.3C threshold")
+        fig.add_hline(y=-0.3, line_dash="dot",
                        line_color=theme.WARNING, opacity=0.5)
-        fig.add_hline(y=-0.3, row=1, col=1, line_dash="dot",
-                       line_color=theme.WARNING, opacity=0.5)
-
-        # Body temperature score (0-100)
-        fig.add_trace(go.Scatter(
-            x=df["day"], y=df["body_temp_score"],
-            mode="lines+markers",
-            line=dict(color=theme.SECONDARY, width=2),
-            marker=dict(size=3),
-            name="Body Temp Score",
-        ), row=2, col=1)
 
         theme.style_figure(
             fig,
             n=s["n"],
-            title="Body Temperature Trend",
-            height=500,
+            title="Body Temperature Deviation from Baseline",
+            height=400,
         )
+        fig.update_yaxes(title_text="Deviation (C)")
         fig.update_layout(showlegend=True, legend=dict(orientation="h", y=1.08))
 
         return fig
@@ -193,12 +176,10 @@ class TemperatureTrendAnalyzer(InsightAnalyzer):
                 "consider whether recovery, sleep, or illness may be a factor."
             )
 
-        if s["temp_readiness_corr"] is not None:
-            direction = "negatively" if s["temp_readiness_corr"] < -0.2 else "weakly"
-            if s["temp_readiness_corr"] < -0.2:
-                parts.append(
-                    f"Temperature deviations correlate {direction} with readiness "
-                    f"(r={s['temp_readiness_corr']:.2f}) — higher temps tend to lower your readiness."
-                )
+        if s["temp_readiness_corr"] is not None and s["temp_readiness_corr"] < -0.2:
+            parts.append(
+                f"Temperature deviations correlate negatively with readiness "
+                f"(r={s['temp_readiness_corr']:.2f}) — higher temps tend to lower your readiness."
+            )
 
         return " ".join(parts)
