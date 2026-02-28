@@ -2,12 +2,12 @@
 
 SELECT
     r.date AS day,
-    r.temperature_deviation AS temp_deviation,
-    r.temperature_deviation - LAG(r.temperature_deviation, 1) OVER (ORDER BY r.date) AS temp_trend_deviation,
-    AVG(r.temperature_deviation) OVER (ORDER BY r.date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS temp_dev_7day_avg,
+    CAST(r.temperature_deviation AS double) AS temp_deviation,
+    CAST(r.temperature_deviation AS double) - LAG(CAST(r.temperature_deviation AS double), 1) OVER (ORDER BY r.date) AS temp_trend_deviation,
+    AVG(CAST(r.temperature_deviation AS double)) OVER (ORDER BY r.date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS temp_dev_7day_avg,
     CASE
-        WHEN ABS(r.temperature_deviation) > 0.5 THEN 'elevated'
-        WHEN ABS(r.temperature_deviation) > 0.3 THEN 'mild'
+        WHEN ABS(CAST(r.temperature_deviation AS double)) > 0.5 THEN 'elevated'
+        WHEN ABS(CAST(r.temperature_deviation AS double)) > 0.3 THEN 'mild'
         ELSE 'normal'
     END AS temp_status,
     r.readiness_score
