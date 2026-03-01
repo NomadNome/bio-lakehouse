@@ -14,7 +14,11 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from insights_engine.config import ENERGY_THRESHOLDS, INTENSITY_OUTPUT_DEFAULTS
+from insights_engine.config import (
+    ENERGY_THRESHOLDS,
+    INTENSITY_OUTPUT_DEFAULTS,
+    WORKOUT_TSS_ESTIMATES,
+)
 from insights_engine.core.athena_client import AthenaClient
 
 
@@ -35,6 +39,39 @@ class SimulationResult:
     recommendation: str = ""
     comparison_to_baseline: float = 0.0
     supporting_data: dict = field(default_factory=dict)
+
+
+@dataclass
+class DayPlan:
+    day_offset: int = 1
+    sleep_score: int = 80
+    workout_type: str = "rest"
+    workout_intensity: str = "none"
+
+
+@dataclass
+class DayProjection:
+    day_offset: int = 1
+    date_label: str = ""
+    predicted_readiness: float = 0.0
+    confidence_range: tuple = (0.0, 0.0)
+    energy_state: str = "moderate"
+    overtraining_risk: str = "low"
+    recommendation: str = ""
+    consecutive_workout_days: int = 0
+    estimated_tss: float = 0.0
+    projected_ctl: float = 0.0
+    projected_atl: float = 0.0
+    projected_tsb: float = 0.0
+
+
+@dataclass
+class MultiDayResult:
+    projections: list = field(default_factory=list)
+    baseline_readiness_7d: float = 0.0
+    starting_ctl: float = 0.0
+    starting_atl: float = 0.0
+    plan_summary: str = ""
 
 
 class WhatIfSimulator:
@@ -100,6 +137,15 @@ class WhatIfSimulator:
             LIMIT 1
         """)
         models["current_streak"] = self._extract_streak(risk_df)
+
+        # 5. TSS history for seeding CTL/ATL in multi-day planning
+        tss_df = self.athena.execute_query("""
+            SELECT date, tss
+            FROM bio_gold.training_load_daily
+            WHERE tss IS NOT NULL
+            ORDER BY date
+        """)
+        models["tss_history"] = self._compute_starting_loads(tss_df)
 
         self._models = models
         return models
@@ -367,4 +413,141 @@ class WhatIfSimulator:
         return (
             "Moderate energy predicted. A moderate workout should be fine, "
             "but listen to your body."
+        )
+
+    # ── Multi-day planning ──────────────────────────────────────────────
+
+    @staticmethod
+    def _compute_starting_loads(tss_df: pd.DataFrame) -> dict:
+        """Compute latest CTL/ATL from TSS history using EMA."""
+        if tss_df.empty:
+            return {"ctl": 0.0, "atl": 0.0}
+        tss = tss_df["tss"].astype(float)
+        ctl_alpha = 2.0 / (42 + 1)
+        atl_alpha = 2.0 / (7 + 1)
+        ctl = 0.0
+        atl = 0.0
+        for val in tss:
+            ctl = ctl + (val - ctl) * ctl_alpha
+            atl = atl + (val - atl) * atl_alpha
+        return {"ctl": round(ctl, 1), "atl": round(atl, 1)}
+
+    @staticmethod
+    def _estimate_tss(workout_type: str, intensity: str) -> float:
+        """Lookup estimated TSS from config table."""
+        wtype = workout_type.lower()
+        inten = intensity.lower()
+        if wtype == "rest" or inten == "none":
+            return 0.0
+        type_map = WORKOUT_TSS_ESTIMATES.get(wtype, {})
+        return float(type_map.get(inten, type_map.get("moderate", 0)))
+
+    def simulate_multi_day(self, plans: list) -> MultiDayResult:
+        """Cascading multi-day readiness projection.
+
+        Each day feeds into the next: consecutive workout days accumulate,
+        training load builds, and rest days trigger recovery.
+        """
+        from datetime import date, timedelta
+
+        models = self.load_historical_models()
+        baseline = models["baseline"]
+        streak = models["current_streak"]
+        tss_hist = models["tss_history"]
+
+        ctl = tss_hist["ctl"]
+        atl = tss_hist["atl"]
+        consecutive = streak["consecutive_workout_days"]
+
+        today = date.today()
+        projections = []
+
+        sorted_plans = sorted(plans, key=lambda p: p.day_offset)
+
+        for plan in sorted_plans:
+            # Update consecutive workout days
+            is_workout = plan.workout_type.lower() != "rest" and plan.workout_intensity.lower() != "none"
+            if is_workout:
+                consecutive += 1
+            else:
+                consecutive = 0
+
+            # Predict readiness via existing single-day simulate()
+            scenario = Scenario(
+                sleep_score=plan.sleep_score,
+                workout_type=plan.workout_type,
+                workout_intensity=plan.workout_intensity,
+                consecutive_workout_days=consecutive,
+            )
+            result = self.simulate(scenario)
+
+            # Estimate TSS and forward-propagate CTL/ATL
+            tss = self._estimate_tss(plan.workout_type, plan.workout_intensity)
+            ctl = ctl + (tss - ctl) * (2.0 / (42 + 1))
+            atl = atl + (tss - atl) * (2.0 / (7 + 1))
+            tsb = ctl - atl
+
+            # Widen confidence band by 5% per day offset for honest uncertainty
+            base_lo, base_hi = result.confidence_range
+            spread = (base_hi - base_lo) / 2
+            widened = spread * (1 + 0.05 * plan.day_offset)
+            lo = max(0, result.predicted_readiness - widened)
+            hi = min(100, result.predicted_readiness + widened)
+
+            proj_date = today + timedelta(days=plan.day_offset)
+            date_label = proj_date.strftime("%a %b %-d")
+
+            projections.append(DayProjection(
+                day_offset=plan.day_offset,
+                date_label=date_label,
+                predicted_readiness=result.predicted_readiness,
+                confidence_range=(round(lo, 1), round(hi, 1)),
+                energy_state=result.energy_state,
+                overtraining_risk=result.overtraining_risk,
+                recommendation=result.recommendation,
+                consecutive_workout_days=consecutive,
+                estimated_tss=round(tss, 0),
+                projected_ctl=round(ctl, 1),
+                projected_atl=round(atl, 1),
+                projected_tsb=round(tsb, 1),
+            ))
+
+        summary = self._summarize_plan(projections, baseline["avg_readiness_7d"])
+
+        return MultiDayResult(
+            projections=projections,
+            baseline_readiness_7d=baseline["avg_readiness_7d"],
+            starting_ctl=tss_hist["ctl"],
+            starting_atl=tss_hist["atl"],
+            plan_summary=summary,
+        )
+
+    @staticmethod
+    def _summarize_plan(projections: list, baseline: float) -> str:
+        """Natural-language summary of the multi-day plan."""
+        if not projections:
+            return "No days planned."
+        first = projections[0].predicted_readiness
+        last = projections[-1].predicted_readiness
+        n = len(projections)
+
+        trend = "stays steady"
+        if last > first + 3:
+            trend = "trends upward"
+        elif last < first - 3:
+            trend = "trends downward"
+
+        low_days = [p for p in projections if p.energy_state in ("low", "recovery_needed")]
+        low_warning = ""
+        if low_days:
+            names = ", ".join(p.date_label for p in low_days)
+            low_warning = f" Low energy on {names} — consider rest."
+
+        ctl_start = projections[0].projected_ctl
+        ctl_end = projections[-1].projected_ctl
+
+        return (
+            f"Over the {n}-day plan, readiness {trend} from "
+            f"{first:.0f} to {last:.0f}.{low_warning} "
+            f"CTL moves {ctl_start:.0f} → {ctl_end:.0f}."
         )

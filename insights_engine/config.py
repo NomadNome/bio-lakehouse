@@ -72,6 +72,23 @@ INTENSITY_OUTPUT_DEFAULTS = {
     "high": 500,
 }
 
+# Readiness zone bands for multi-day projection chart backgrounds
+READINESS_ZONE_BANDS = [
+    {"label": "Peak",     "y0": 85, "y1": 100, "color": "rgba(34,197,94,0.08)"},
+    {"label": "High",     "y0": 75, "y1": 85,  "color": "rgba(20,184,166,0.08)"},
+    {"label": "Moderate", "y0": 60, "y1": 75,  "color": "rgba(99,102,241,0.08)"},
+    {"label": "Low",      "y0": 45, "y1": 60,  "color": "rgba(245,158,11,0.08)"},
+    {"label": "Recovery", "y0": 0,  "y1": 45,  "color": "rgba(239,68,68,0.08)"},
+]
+
+# Estimated TSS by workout type and intensity for multi-day planning
+WORKOUT_TSS_ESTIMATES = {
+    "cycling":              {"low": 35,  "moderate": 65,  "high": 110},
+    "strength":             {"low": 25,  "moderate": 50,  "high": 80},
+    "cycling_and_strength": {"low": 50,  "moderate": 90,  "high": 150},
+    "rest":                 {"low": 0,   "moderate": 0,   "high": 0},
+}
+
 # Athena views available in bio_gold
 GOLD_VIEWS = [
     "daily_readiness_performance",

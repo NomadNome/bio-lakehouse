@@ -10,7 +10,7 @@ Multi-page app with:
 from __future__ import annotations
 
 import time
-from datetime import date
+from datetime import date, timedelta
 
 import streamlit as st
 import pandas as pd
@@ -157,6 +157,29 @@ with st.sidebar:
             c2.metric("HRV", f"{hk_row['avg_hrv']:.0f} ms")
             if hk_row.get("avg_vo2") and float(hk_row["avg_vo2"]) > 0:
                 st.metric("VO2 Max", f"{hk_row['avg_vo2']:.1f}")
+    except Exception:
+        pass
+
+    # Nutrition summary (if MFP data exists)
+    try:
+        nutr_df = athena.execute_query("""
+            SELECT
+                ROUND(AVG(daily_calories), 0) AS avg_cal,
+                ROUND(AVG(protein_g), 0) AS avg_protein
+            FROM bio_gold.daily_readiness_performance
+            WHERE daily_calories IS NOT NULL
+              AND COALESCE(
+                    TRY(CAST(date AS date)),
+                    TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
+                  ) >= CURRENT_DATE - INTERVAL '7' DAY
+        """)
+        if not nutr_df.empty and nutr_df.iloc[0]["avg_cal"] is not None:
+            nutr_row = nutr_df.iloc[0]
+            st.divider()
+            st.caption("Nutrition (7-day)")
+            nc1, nc2 = st.columns(2)
+            nc1.metric("Avg Cal", f"{nutr_row['avg_cal']:.0f}")
+            nc2.metric("Avg Protein", f"{nutr_row['avg_protein']:.0f}g")
     except Exception:
         pass
 
@@ -325,6 +348,7 @@ elif page == "📊 Insights":
         from insights_engine.insights.recovery_windows import RecoveryWindowAnalyzer
         from insights_engine.insights.temperature_trend import TemperatureTrendAnalyzer
         from insights_engine.insights.sleep_architecture import SleepArchitectureAnalyzer
+        from insights_engine.insights.nutrition_analyzer import NutritionAnalyzer
 
         _athena = get_athena()
         results = []
@@ -338,6 +362,7 @@ elif page == "📊 Insights":
             AnomalyDetectionAnalyzer,
             TimingCorrelationAnalyzer,
             TrainingLoadAnalyzer,
+            NutritionAnalyzer,
         ]:
             try:
                 results.append(Cls(_athena).analyze())
@@ -830,8 +855,15 @@ elif page == "🔮 What-If":
         "Explore how sleep, workout choices, and training load affect your predicted readiness."
     )
 
-    from insights_engine.insights.what_if import Scenario, WhatIfSimulator
-    from insights_engine.viz.what_if_charts import readiness_gauge, scenario_comparison_chart
+    from datetime import date as _date, timedelta as _timedelta
+
+    from insights_engine.insights.what_if import DayPlan, Scenario, WhatIfSimulator
+    from insights_engine.viz.what_if_charts import (
+        day_card_html,
+        multi_day_projection_chart,
+        readiness_gauge,
+        scenario_comparison_chart,
+    )
 
     # Cached simulator — loads historical models once per session
     if "whatif_simulator" not in st.session_state:
@@ -851,172 +883,291 @@ elif page == "🔮 What-If":
     baseline = models["baseline"]
     streak = models["current_streak"]
 
-    # ── Input controls & results side-by-side ────────────────────────
-    col_input, col_results = st.columns([1, 2])
+    tab_single, tab_planner = st.tabs(["Single Scenario", "Multi-Day Planner"])
 
-    with col_input:
-        st.subheader("Scenario")
-        sleep_score = st.slider(
-            "Tonight's Sleep Score",
-            min_value=0,
-            max_value=100,
-            value=int(baseline["avg_readiness_7d"]),
-            help="Your predicted or target sleep score (0-100)",
+    # ══════════════════════════════════════════════════════════════════
+    # TAB 1: SINGLE SCENARIO (existing code, verbatim)
+    # ══════════════════════════════════════════════════════════════════
+    with tab_single:
+        # ── Input controls & results side-by-side ────────────────────────
+        col_input, col_results = st.columns([1, 2])
+
+        with col_input:
+            st.subheader("Scenario")
+            sleep_score = st.slider(
+                "Tonight's Sleep Score",
+                min_value=0,
+                max_value=100,
+                value=int(baseline["avg_readiness_7d"]),
+                help="Your predicted or target sleep score (0-100)",
+            )
+            workout_map = {
+                "Rest Day": "rest",
+                "Cycling": "cycling",
+                "Strength": "strength",
+                "Cycling + Strength": "cycling_and_strength",
+            }
+            workout_label = st.selectbox(
+                "Tomorrow's Workout",
+                list(workout_map.keys()),
+            )
+            workout_type = workout_map[workout_label]
+
+            intensity_options = ["None", "Low", "Moderate", "High"]
+            default_intensity = 0 if workout_type == "rest" else 2
+            workout_intensity = st.select_slider(
+                "Workout Intensity",
+                options=intensity_options,
+                value=intensity_options[default_intensity],
+            )
+
+            consecutive_days = st.number_input(
+                "Consecutive Workout Days",
+                min_value=0,
+                max_value=14,
+                value=streak["consecutive_workout_days"],
+                help="Including tomorrow if you plan to work out",
+            )
+
+            simulate_clicked = st.button("Simulate", type="primary", use_container_width=True)
+
+        # ── Run simulation (auto-run on first load, then on button click) ─
+        run_sim = simulate_clicked or "whatif_latest" not in st.session_state
+        if run_sim:
+            scenario = Scenario(
+                sleep_score=sleep_score,
+                workout_type=workout_type,
+                workout_intensity=workout_intensity.lower(),
+                consecutive_workout_days=int(consecutive_days),
+            )
+            result = simulator.simulate(scenario)
+
+            # Save to session for comparison
+            if "whatif_scenarios" not in st.session_state:
+                st.session_state.whatif_scenarios = []
+
+            label = f"{workout_label}, Sleep {sleep_score}"
+            st.session_state.whatif_scenarios.append({
+                "label": label,
+                "scenario": scenario,
+                "result": result,
+                "predicted_readiness": result.predicted_readiness,
+                "confidence_range": result.confidence_range,
+            })
+            # Keep only last 3
+            st.session_state.whatif_scenarios = st.session_state.whatif_scenarios[-3:]
+            st.session_state.whatif_latest = result
+
+        # ── Display results ──────────────────────────────────────────────
+        latest = st.session_state.get("whatif_latest")
+        if latest:
+            result = latest
+            with col_results:
+                st.subheader("Predicted Outcome")
+
+                # Gauge chart
+                gauge_fig = readiness_gauge(
+                    result.predicted_readiness,
+                    result.confidence_range,
+                    baseline["avg_readiness_7d"],
+                )
+                st.plotly_chart(gauge_fig, use_container_width=True)
+
+                # Metrics row
+                m1, m2, m3 = st.columns(3)
+
+                # Energy state badge
+                energy_colors = {
+                    "peak": _palette["success"],
+                    "high": _palette["accent"],
+                    "moderate": _palette["primary"],
+                    "low": _palette["warning"],
+                    "recovery_needed": _palette["danger"],
+                }
+                energy_color = energy_colors.get(result.energy_state, _palette["text_muted"])
+                m1.markdown(
+                    f'<div style="text-align:center">'
+                    f'<span style="background:{energy_color};color:#fff;padding:4px 12px;'
+                    f'border-radius:12px;font-weight:600;font-size:0.9rem">'
+                    f'{result.energy_state.replace("_", " ").title()}</span>'
+                    f'<br><span style="color:{_text_muted};font-size:0.8rem">Energy State</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+                # Overtraining risk
+                risk_colors = {"low": _palette["success"], "moderate": _palette["warning"], "high": _palette["danger"]}
+                risk_color = risk_colors.get(result.overtraining_risk, _palette["text_muted"])
+                m2.markdown(
+                    f'<div style="text-align:center">'
+                    f'<span style="background:{risk_color};color:#fff;padding:4px 12px;'
+                    f'border-radius:12px;font-weight:600;font-size:0.9rem">'
+                    f'{result.overtraining_risk.title()}</span>'
+                    f'<br><span style="color:{_text_muted};font-size:0.8rem">Overtraining Risk</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+                # Delta vs baseline
+                delta = result.comparison_to_baseline
+                m3.metric(
+                    "vs 7-Day Avg",
+                    f"{result.predicted_readiness:.0f}",
+                    delta=f"{delta:+.1f}",
+                    delta_color="normal",
+                )
+
+                # Recommendation
+                st.info(result.recommendation)
+
+                # Confidence note
+                sd = result.supporting_data
+                with st.expander("Statistical Notes"):
+                    st.caption(
+                        f"Confidence range: {result.confidence_range[0]:.0f}–{result.confidence_range[1]:.0f} "
+                        f"(±1 std from your historical '{sd.get('sleep_bucket', '?')}' sleep bucket, "
+                        f"n={sd.get('bucket_n', '?')})"
+                    )
+                    if sd.get("regression_r") is not None:
+                        st.caption(
+                            f"Sleep→readiness regression: r={sd['regression_r']:.2f}, "
+                            f"n={sd['regression_n']}"
+                        )
+                    st.caption(
+                        f"Workout type adjustment: {sd.get('workout_delta', 0):+.1f} | "
+                        f"Overtraining penalty: {sd.get('overtraining_penalty', 0):+.1f}"
+                    )
+                    st.caption(
+                        f"Based on {sd.get('total_historical_days', '?')} days of your historical data. "
+                        f"Correlation ≠ causation — these are pattern-based projections, not medical advice."
+                    )
+
+        # ── Scenario comparison ──────────────────────────────────────────
+        saved = st.session_state.get("whatif_scenarios", [])
+        if len(saved) >= 2:
+            st.divider()
+            st.subheader("Compare Scenarios")
+            comp_fig = scenario_comparison_chart(saved)
+            st.plotly_chart(comp_fig, use_container_width=True)
+
+        if saved:
+            if st.button("Clear Scenarios"):
+                st.session_state.whatif_scenarios = []
+                st.session_state.pop("whatif_latest", None)
+                st.rerun()
+
+    # ══════════════════════════════════════════════════════════════════
+    # TAB 2: MULTI-DAY PLANNER
+    # ══════════════════════════════════════════════════════════════════
+    with tab_planner:
+        st.subheader("Multi-Day Readiness Planner")
+        st.caption(
+            "Plan 3-7 days ahead. Each day cascades into the next — "
+            "consecutive workouts accumulate fatigue, rest days trigger recovery."
         )
-        workout_map = {
-            "Rest Day": "rest",
+
+        _plan_workout_map = {
+            "Rest": "rest",
             "Cycling": "cycling",
             "Strength": "strength",
             "Cycling + Strength": "cycling_and_strength",
         }
-        workout_label = st.selectbox(
-            "Tomorrow's Workout",
-            list(workout_map.keys()),
-        )
-        workout_type = workout_map[workout_label]
+        _plan_intensity_opts = ["None", "Low", "Moderate", "High"]
 
-        intensity_options = ["None", "Low", "Moderate", "High"]
-        default_intensity = 0 if workout_type == "rest" else 2
-        workout_intensity = st.select_slider(
-            "Workout Intensity",
-            options=intensity_options,
-            value=intensity_options[default_intensity],
+        horizon = st.radio(
+            "Planning horizon (days)",
+            options=[3, 4, 5, 6, 7],
+            index=2,
+            horizontal=True,
         )
 
-        consecutive_days = st.number_input(
-            "Consecutive Workout Days",
-            min_value=0,
-            max_value=14,
-            value=streak["consecutive_workout_days"],
-            help="Including tomorrow if you plan to work out",
-        )
+        default_sleep = int(baseline.get("mean_sleep", baseline.get("avg_readiness_7d", 75)))
+        today = _date.today()
 
-        simulate_clicked = st.button("🔮 Simulate", type="primary", use_container_width=True)
+        # Day input grid — max 4 per row
+        day_plans = []
+        rows_needed = (horizon + 3) // 4
+        day_idx = 0
+        for row_i in range(rows_needed):
+            cols_in_row = min(4, horizon - day_idx)
+            cols = st.columns(cols_in_row)
+            for ci in range(cols_in_row):
+                offset = day_idx + 1
+                day_date = today + _timedelta(days=offset)
+                label = day_date.strftime("%a %b %-d")
+                with cols[ci]:
+                    st.markdown(f"**Day {offset}: {label}**")
+                    sl = st.slider(
+                        "Sleep",
+                        0,
+                        100,
+                        default_sleep,
+                        key=f"plan_sleep_{offset}",
+                    )
+                    wl = st.selectbox(
+                        "Workout",
+                        list(_plan_workout_map.keys()),
+                        key=f"plan_wtype_{offset}",
+                    )
+                    il = st.select_slider(
+                        "Intensity",
+                        options=_plan_intensity_opts,
+                        value="None" if _plan_workout_map[wl] == "rest" else "Moderate",
+                        key=f"plan_inten_{offset}",
+                    )
+                    day_plans.append(DayPlan(
+                        day_offset=offset,
+                        sleep_score=sl,
+                        workout_type=_plan_workout_map[wl],
+                        workout_intensity=il.lower(),
+                    ))
+                day_idx += 1
 
-    # ── Run simulation (auto-run on first load, then on button click) ─
-    run_sim = simulate_clicked or "whatif_latest" not in st.session_state
-    if run_sim:
-        scenario = Scenario(
-            sleep_score=sleep_score,
-            workout_type=workout_type,
-            workout_intensity=workout_intensity.lower(),
-            consecutive_workout_days=int(consecutive_days),
-        )
-        result = simulator.simulate(scenario)
+        project_clicked = st.button("Project Readiness", type="primary", use_container_width=True)
 
-        # Save to session for comparison
-        if "whatif_scenarios" not in st.session_state:
-            st.session_state.whatif_scenarios = []
+        if project_clicked:
+            with st.spinner("Running multi-day projection..."):
+                multi_result = simulator.simulate_multi_day(day_plans)
+            st.session_state.multiday_result = multi_result
 
-        label = f"{workout_label}, Sleep {sleep_score}"
-        st.session_state.whatif_scenarios.append({
-            "label": label,
-            "scenario": scenario,
-            "result": result,
-            "predicted_readiness": result.predicted_readiness,
-            "confidence_range": result.confidence_range,
-        })
-        # Keep only last 3
-        st.session_state.whatif_scenarios = st.session_state.whatif_scenarios[-3:]
-        st.session_state.whatif_latest = result
+        mdr = st.session_state.get("multiday_result")
+        if mdr and mdr.projections:
+            # ── Projection chart ─────────────────────────────────────
+            proj_fig = multi_day_projection_chart(mdr.projections, mdr.baseline_readiness_7d)
+            st.plotly_chart(proj_fig, use_container_width=True)
 
-    # ── Display results ──────────────────────────────────────────────
-    latest = st.session_state.get("whatif_latest")
-    if latest:
-        result = latest
-        with col_results:
-            st.subheader("Predicted Outcome")
+            # ── Summary ──────────────────────────────────────────────
+            st.info(mdr.plan_summary)
 
-            # Gauge chart
-            gauge_fig = readiness_gauge(
-                result.predicted_readiness,
-                result.confidence_range,
-                baseline["avg_readiness_7d"],
-            )
-            st.plotly_chart(gauge_fig, use_container_width=True)
+            # ── Day cards ────────────────────────────────────────────
+            cards_per_row = min(4, len(mdr.projections))
+            card_rows = (len(mdr.projections) + cards_per_row - 1) // cards_per_row
+            pi = 0
+            for _ in range(card_rows):
+                n_cols = min(cards_per_row, len(mdr.projections) - pi)
+                card_cols = st.columns(n_cols)
+                for ci in range(n_cols):
+                    with card_cols[ci]:
+                        st.markdown(
+                            day_card_html(mdr.projections[pi], _palette),
+                            unsafe_allow_html=True,
+                        )
+                    pi += 1
 
-            # Metrics row
-            m1, m2, m3 = st.columns(3)
-
-            # Energy state badge
-            energy_colors = {
-                "peak": _palette["success"],
-                "high": _palette["accent"],
-                "moderate": _palette["primary"],
-                "low": _palette["warning"],
-                "recovery_needed": _palette["danger"],
-            }
-            energy_color = energy_colors.get(result.energy_state, _palette["text_muted"])
-            m1.markdown(
-                f'<div style="text-align:center">'
-                f'<span style="background:{energy_color};color:#fff;padding:4px 12px;'
-                f'border-radius:12px;font-weight:600;font-size:0.9rem">'
-                f'{result.energy_state.replace("_", " ").title()}</span>'
-                f'<br><span style="color:{_text_muted};font-size:0.8rem">Energy State</span>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-            # Overtraining risk
-            risk_colors = {"low": _palette["success"], "moderate": _palette["warning"], "high": _palette["danger"]}
-            risk_color = risk_colors.get(result.overtraining_risk, _palette["text_muted"])
-            m2.markdown(
-                f'<div style="text-align:center">'
-                f'<span style="background:{risk_color};color:#fff;padding:4px 12px;'
-                f'border-radius:12px;font-weight:600;font-size:0.9rem">'
-                f'{result.overtraining_risk.title()}</span>'
-                f'<br><span style="color:{_text_muted};font-size:0.8rem">Overtraining Risk</span>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-            # Delta vs baseline
-            delta = result.comparison_to_baseline
-            m3.metric(
-                "vs 7-Day Avg",
-                f"{result.predicted_readiness:.0f}",
-                delta=f"{delta:+.1f}",
-                delta_color="normal",
-            )
-
-            # Recommendation
-            st.info(result.recommendation)
-
-            # Confidence note
-            sd = result.supporting_data
+            # ── Statistical notes ────────────────────────────────────
             with st.expander("Statistical Notes"):
                 st.caption(
-                    f"Confidence range: {result.confidence_range[0]:.0f}–{result.confidence_range[1]:.0f} "
-                    f"(±1 std from your historical '{sd.get('sleep_bucket', '?')}' sleep bucket, "
-                    f"n={sd.get('bucket_n', '?')})"
-                )
-                if sd.get("regression_r") is not None:
-                    st.caption(
-                        f"Sleep→readiness regression: r={sd['regression_r']:.2f}, "
-                        f"n={sd['regression_n']}"
-                    )
-                st.caption(
-                    f"Workout type adjustment: {sd.get('workout_delta', 0):+.1f} | "
-                    f"Overtraining penalty: {sd.get('overtraining_penalty', 0):+.1f}"
+                    f"Starting CTL: {mdr.starting_ctl:.0f} | Starting ATL: {mdr.starting_atl:.0f}"
                 )
                 st.caption(
-                    f"Based on {sd.get('total_historical_days', '?')} days of your historical data. "
-                    f"Correlation ≠ causation — these are pattern-based projections, not medical advice."
+                    "Confidence bands widen by 5% per day to reflect increasing uncertainty. "
+                    "Readiness predictions use the same sleep→readiness regression and "
+                    "workout-type adjustments as the Single Scenario tab."
                 )
-
-    # ── Scenario comparison ──────────────────────────────────────────
-    saved = st.session_state.get("whatif_scenarios", [])
-    if len(saved) >= 2:
-        st.divider()
-        st.subheader("Compare Scenarios")
-        comp_fig = scenario_comparison_chart(saved)
-        st.plotly_chart(comp_fig, use_container_width=True)
-
-    if saved:
-        if st.button("Clear Scenarios"):
-            st.session_state.whatif_scenarios = []
-            st.session_state.pop("whatif_latest", None)
-            st.rerun()
+                st.caption(
+                    "TSS estimates are approximations based on workout type and intensity. "
+                    "Actual training load may vary. These are pattern-based projections, not medical advice."
+                )
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1323,13 +1474,16 @@ elif page == "🧪 Experiments":
     from insights_engine.experiments.tracker import ExperimentStore, Intervention, InterventionType
     from insights_engine.experiments.analyzer import (
         get_pre_post_data, bayesian_analysis, did_analysis, ANALYSIS_METRICS,
+        correlation_analysis, CORRELATION_INPUT_METRICS, CORRELATION_OUTCOME_METRICS,
     )
     from insights_engine.experiments import viz as exp_viz
     import numpy as np
 
     store = ExperimentStore()
 
-    exp_tab_active, exp_tab_log, exp_tab_analysis = st.tabs(["Active", "Log New", "Analysis"])
+    exp_tab_active, exp_tab_log, exp_tab_analysis, exp_tab_correlations = st.tabs(
+        ["Active", "Log New", "Analysis", "Correlations"]
+    )
 
     # ── Active Interventions Tab ──
     with exp_tab_active:
@@ -1526,6 +1680,131 @@ elif page == "🧪 Experiments":
 
                     except Exception as e:
                         st.error(f"Analysis failed: {e}")
+
+    # ── Correlations Tab ──
+    with exp_tab_correlations:
+        st.subheader("Metric Correlations")
+        st.caption(
+            "Explore how nutrition, training, and lifestyle inputs correlate with health outcomes. "
+            "Use lag to test delayed effects (e.g., today's protein → tomorrow's readiness)."
+        )
+
+        corr_col1, corr_col2 = st.columns(2)
+        with corr_col1:
+            corr_input = st.selectbox(
+                "Input Variable",
+                list(CORRELATION_INPUT_METRICS.keys()),
+                format_func=lambda k: CORRELATION_INPUT_METRICS[k],
+                key="corr_input_select",
+            )
+        with corr_col2:
+            corr_outcome = st.selectbox(
+                "Outcome Variable",
+                list(CORRELATION_OUTCOME_METRICS.keys()),
+                format_func=lambda k: CORRELATION_OUTCOME_METRICS[k],
+                key="corr_outcome_select",
+            )
+
+        corr_s1, corr_s2, corr_s3 = st.columns(3)
+        with corr_s1:
+            corr_lookback = st.slider(
+                "Lookback (days)", min_value=14, max_value=365, value=90,
+                key="corr_lookback",
+            )
+        with corr_s2:
+            corr_window = st.slider(
+                "Rolling Window (days)", min_value=7, max_value=30, value=14,
+                key="corr_window",
+            )
+        with corr_s3:
+            corr_lag = st.number_input(
+                "Lag (days)", min_value=0, max_value=7, value=0,
+                help="Shift outcome forward by N days (today's input → future outcome)",
+                key="corr_lag",
+            )
+
+        if st.button("Run Correlation Analysis", type="primary", key="run_corr"):
+            athena = get_athena()
+            input_label = CORRELATION_INPUT_METRICS[corr_input]
+            outcome_label = CORRELATION_OUTCOME_METRICS[corr_outcome]
+
+            end_dt = date.today()
+            start_dt = end_dt - timedelta(days=corr_lookback)
+
+            with st.spinner("Computing correlation..."):
+                try:
+                    result = correlation_analysis(
+                        athena,
+                        corr_input,
+                        corr_outcome,
+                        start_dt.isoformat(),
+                        end_dt.isoformat(),
+                        rolling_window=corr_window,
+                        lag_days=corr_lag,
+                    )
+
+                    if result is None:
+                        st.warning(
+                            "Not enough data for correlation analysis. "
+                            "Need at least 5 days where both metrics have values."
+                        )
+                    else:
+                        # Metric cards
+                        mc1, mc2, mc3, mc4 = st.columns(4)
+                        mc1.metric("Pearson r", f"{result.pearson_r:.3f}")
+                        mc2.metric("p-value", f"{result.p_value:.4f}")
+                        mc3.metric("R²", f"{result.r_squared:.3f}")
+                        mc4.metric("Observations", f"{result.n_observations}")
+
+                        # Interpretation
+                        if result.p_value < 0.05:
+                            st.info(result.interpretation)
+                        else:
+                            st.warning(result.interpretation)
+
+                        # Charts side by side
+                        chart_c1, chart_c2 = st.columns(2)
+                        with chart_c1:
+                            scatter_fig = exp_viz.correlation_scatter(
+                                result, input_label, outcome_label, dark=_dark,
+                            )
+                            st.plotly_chart(scatter_fig, use_container_width=True)
+                        with chart_c2:
+                            if result.rolling_r_values:
+                                rolling_fig = exp_viz.rolling_correlation_chart(
+                                    result, input_label, outcome_label, dark=_dark,
+                                )
+                                st.plotly_chart(rolling_fig, use_container_width=True)
+                            else:
+                                st.info("Not enough data for rolling correlation chart.")
+
+                        # Practical interpretation
+                        if corr_lag > 0:
+                            lag_text = f" (with {corr_lag}-day lag: today's {input_label} → {'tomorrow' if corr_lag == 1 else f'{corr_lag} days later'}'s {outcome_label})"
+                        else:
+                            lag_text = " (same-day)"
+
+                        if abs(result.pearson_r) >= 0.3 and result.p_value < 0.05:
+                            direction = "higher" if result.pearson_r > 0 else "lower"
+                            st.success(
+                                f"Days with higher {input_label} tend to have {direction} "
+                                f"{outcome_label}{lag_text}. "
+                                f"Each unit increase in {input_label} is associated with a "
+                                f"{result.regression_slope:+.4f} change in {outcome_label}."
+                            )
+                        elif result.p_value >= 0.05:
+                            st.info(
+                                f"No statistically significant relationship detected between "
+                                f"{input_label} and {outcome_label}{lag_text} in this time period."
+                            )
+                        else:
+                            st.info(
+                                f"Weak but significant relationship between "
+                                f"{input_label} and {outcome_label}{lag_text}."
+                            )
+
+                except Exception as e:
+                    st.error(f"Correlation analysis failed: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════
