@@ -25,6 +25,7 @@ ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
 OURA_GLUE_JOB = os.environ.get("OURA_GLUE_JOB", "bio-lakehouse-oura-normalizer")
 PELOTON_GLUE_JOB = os.environ.get("PELOTON_GLUE_JOB", "bio-lakehouse-peloton-normalizer")
 HEALTHKIT_GLUE_JOB = os.environ.get("HEALTHKIT_GLUE_JOB", "bio-lakehouse-healthkit-normalizer")
+MFP_GLUE_JOB = os.environ.get("MFP_GLUE_JOB", "bio-lakehouse-mfp-normalizer")
 SNS_TOPIC_ARN = os.environ.get("ALERT_SNS_TOPIC_ARN", "")
 
 # Expected headers for validation
@@ -63,7 +64,46 @@ EXPECTED_HEADERS = {
     "healthkit/workouts": ["date", "workout_type", "duration_minutes"],
     "healthkit/body": ["date", "weight_lbs", "device_name"],
     "healthkit/mindfulness": ["date", "duration_minutes"],
+    "mfp/nutrition": [
+        "date", "meal", "calories", "fat_g", "saturated_fat",
+        "polyunsaturated_fat", "monounsaturated_fat", "trans_fat",
+        "cholesterol", "sodium_mg", "potassium", "carbohydrates_g",
+        "fiber", "sugar", "protein_g",
+    ],
 }
+
+
+DRIFT_COOLDOWN_SECONDS = 3600  # 1 hour between duplicate drift alerts per source
+
+
+def _is_drift_recently_alerted(source: str) -> bool:
+    """Check if a schema drift alert was already sent for this source within the cooldown window."""
+    table = dynamodb.Table(INGESTION_LOG_TABLE)
+    drift_key = f"drift-alert:{source}"
+    cutoff = int((datetime.now(timezone.utc) - timedelta(seconds=DRIFT_COOLDOWN_SECONDS)).timestamp())
+    try:
+        resp = table.query(
+            KeyConditionExpression="file_path = :fp AND upload_timestamp > :ts",
+            ExpressionAttributeValues={":fp": drift_key, ":ts": cutoff},
+            Limit=1,
+        )
+        return len(resp.get("Items", [])) > 0
+    except Exception:
+        return False
+
+
+def _record_drift_alert(source: str) -> None:
+    """Record that a drift alert was sent for this source."""
+    table = dynamodb.Table(INGESTION_LOG_TABLE)
+    table.put_item(
+        Item={
+            "file_path": f"drift-alert:{source}",
+            "upload_timestamp": int(datetime.now(timezone.utc).timestamp()),
+            "source": source,
+            "status": "drift_alerted",
+            "environment": ENVIRONMENT,
+        }
+    )
 
 
 def detect_source(key: str) -> str:
@@ -96,23 +136,27 @@ def validate_csv_headers(bucket: str, key: str, source: str) -> dict:
 
         valid = len(missing) == 0
 
-        # Alert on schema drift (unexpected new columns)
+        # Alert on schema drift (unexpected new columns) — with cooldown
         if unexpected and SNS_TOPIC_ARN:
-            try:
-                sns.publish(
-                    TopicArn=SNS_TOPIC_ARN,
-                    Subject=f"Schema drift detected: {source}",
-                    Message=(
-                        f"File: s3://{bucket}/{key}\n"
-                        f"New columns found: {unexpected}\n"
-                        f"Expected columns: {sorted(expected)}\n"
-                        f"All headers: {headers}\n\n"
-                        f"Action: Review whether the source API changed. "
-                        f"Update EXPECTED_HEADERS and normalizer if needed."
-                    ),
-                )
-            except Exception as e:
-                print(f"Failed to publish drift alert: {e}")
+            if _is_drift_recently_alerted(source):
+                print(f"Schema drift for {source} already alerted within last {DRIFT_COOLDOWN_SECONDS}s, suppressing")
+            else:
+                try:
+                    sns.publish(
+                        TopicArn=SNS_TOPIC_ARN,
+                        Subject=f"Schema drift detected: {source}",
+                        Message=(
+                            f"File: s3://{bucket}/{key}\n"
+                            f"New columns found: {unexpected}\n"
+                            f"Expected columns: {sorted(expected)}\n"
+                            f"All headers: {headers}\n\n"
+                            f"Action: Review whether the source API changed. "
+                            f"Update EXPECTED_HEADERS and normalizer if needed."
+                        ),
+                    )
+                    _record_drift_alert(source)
+                except Exception as e:
+                    print(f"Failed to publish drift alert: {e}")
 
         return {
             "valid": valid,
@@ -156,6 +200,8 @@ def get_job_name(source):
         return PELOTON_GLUE_JOB
     elif source.startswith("healthkit/"):
         return HEALTHKIT_GLUE_JOB
+    elif source.startswith("mfp/"):
+        return MFP_GLUE_JOB
     return None
 
 
@@ -308,15 +354,16 @@ def lambda_handler(event, context):
             results.append({"key": key, "source": "batch", "batch": batch_result})
             continue
 
-        # Skip individual HealthKit files inside Hive-partitioned batch paths.
+        # Skip individual files inside Hive-partitioned batch paths.
         # These are uploaded in bulk by batch_upload.sh — the manifest
         # (handled above) is responsible for triggering the Glue job once.
-        # Without this guard, thousands of per-file Lambda invocations
-        # cause Glue API throttling and can block unrelated triggers.
-        # NOTE: Only skip healthkit/ paths — Oura daily files also use
-        # year=/month=/day= partitioning but are single-file uploads that
-        # should trigger the normalizer.
-        if "year=" in key and "healthkit/" in key:
+        # Without this guard, hundreds of per-file Lambda invocations
+        # cause Glue API throttling, schema drift alert spam, and can
+        # block unrelated triggers.
+        # NOTE: Only skip healthkit/ and peloton/ paths — Oura daily files
+        # also use year=/month=/day= partitioning but are single-file
+        # uploads that should trigger the normalizer.
+        if "year=" in key and ("healthkit/" in key or "peloton/" in key or "mfp/" in key):
             print(f"Skipping Hive-partitioned file (batch upload): {key}")
             results.append({"key": key, "source": "batch_file", "skipped": True})
             continue
