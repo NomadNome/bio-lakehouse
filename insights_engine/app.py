@@ -483,7 +483,7 @@ elif page == "📊 Insights":
                 f"{direction} resting heart rate tends to {'improve' if corr < 0 else 'coincide with lower'} readiness scores."
             )
 
-        # ── Body Composition Dashboard (Hume Health pod baseline: Feb 19, 2026) ──
+        # ── Body Composition Dashboard (Hume Health pod baseline: Feb 20, 2026) ──
         @st.cache_data(ttl=600, show_spinner="Loading body composition...")
         def load_body_comp():
             _athena = get_athena()
@@ -491,7 +491,7 @@ elif page == "📊 Insights":
                 SELECT date, weight_lbs, body_fat_pct, bmi, lean_body_mass_lbs
                 FROM bio_gold.daily_readiness_performance
                 WHERE COALESCE(TRY(CAST(date AS date)), TRY(date_parse(date, '%Y-%m-%d %H:%i:%s')))
-                      >= DATE '2026-02-19'
+                      >= DATE '2026-02-20'
                   AND (weight_lbs IS NOT NULL OR body_fat_pct IS NOT NULL)
                 ORDER BY date
             """)
@@ -505,7 +505,7 @@ elif page == "📊 Insights":
 
             st.divider()
             st.subheader("Apple Health — Body Composition")
-            st.caption("Baseline: Hume Health pod (Feb 19, 2026). Earlier scale data excluded due to calibration difference.")
+            st.caption("Baseline: Hume Health pod (Feb 20, 2026). Earlier data excluded due to dual-scale calibration on 2/19.")
 
             # ── Summary metrics with deltas ──
             def _first_last(series):
@@ -519,11 +519,15 @@ elif page == "📊 Insights":
             lm_latest, lm_first, lm_delta = _first_last(body_data["lean_body_mass_lbs"])
             bmi_latest, bmi_first, bmi_delta = _first_last(body_data["bmi"])
 
-            mc1, mc2, mc3, mc4 = st.columns(4)
+            BF_GOAL = 15.0
+
+            mc1, mc2, mc3, mc4, mc5 = st.columns(5)
             if w_latest is not None:
                 mc1.metric("Weight", f"{w_latest:.1f} lbs", delta=f"{w_delta:+.1f} lbs", delta_color="inverse")
             if bf_latest is not None:
                 mc2.metric("Body Fat", f"{bf_latest:.1f}%", delta=f"{bf_delta:+.1f}%", delta_color="inverse")
+                to_goal = bf_latest - BF_GOAL
+                mc5.metric("To Goal (15%)", f"{to_goal:.1f}% left", delta=f"{bf_delta:+.1f}% since baseline", delta_color="inverse")
             if lm_latest is not None:
                 mc3.metric("Lean Mass", f"{lm_latest:.1f} lbs", delta=f"{lm_delta:+.1f} lbs", delta_color="normal")
             if bmi_latest is not None:
@@ -570,6 +574,15 @@ elif page == "📊 Insights":
                         line=dict(color=_palette["danger"], width=2),
                         marker=dict(size=4),
                     ), row=current_row, col=1)
+                    # 15% goal line
+                    fig_body.add_hline(
+                        y=BF_GOAL, line_dash="dash", line_color=_palette["success"],
+                        line_width=2,
+                        annotation_text=f"Goal: {BF_GOAL:.0f}%",
+                        annotation_font_color=_palette["success"],
+                        annotation_font_size=10,
+                        row=current_row, col=1,
+                    )
                     current_row += 1
 
                 if has_lm:
@@ -623,15 +636,19 @@ elif page == "📊 Insights":
             ).reset_index()
             weekly["week_label"] = weekly["iso_year"].astype(str) + "-W" + weekly["iso_week"].astype(str).str.zfill(2)
             weekly["weight_change"] = weekly["avg_weight"].diff()
+            weekly["bf_change"] = weekly["avg_body_fat"].diff()
+            weekly["bf_to_goal"] = weekly["avg_body_fat"] - BF_GOAL
 
-            display_weekly = weekly[["week_label", "avg_weight", "avg_body_fat", "avg_lean_mass", "weight_change"]].copy()
-            display_weekly.columns = ["Week", "Avg Weight (lbs)", "Avg Body Fat %", "Avg Lean Mass (lbs)", "Weight Change (lbs)"]
+            display_weekly = weekly[["week_label", "avg_weight", "avg_body_fat", "bf_change", "bf_to_goal", "avg_lean_mass", "weight_change"]].copy()
+            display_weekly.columns = ["Week", "Avg Weight (lbs)", "Avg BF %", "BF Change (%)", "BF to 15% Goal", "Avg Lean Mass (lbs)", "Weight Change (lbs)"]
 
             st.markdown("**Weekly Trends**")
             st.dataframe(
                 display_weekly.style.format({
                     "Avg Weight (lbs)": "{:.1f}",
-                    "Avg Body Fat %": "{:.1f}",
+                    "Avg BF %": "{:.1f}",
+                    "BF Change (%)": "{:+.1f}",
+                    "BF to 15% Goal": "{:.1f}",
                     "Avg Lean Mass (lbs)": "{:.1f}",
                     "Weight Change (lbs)": "{:+.1f}",
                 }, na_rep="—"),
