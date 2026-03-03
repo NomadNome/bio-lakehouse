@@ -17,7 +17,7 @@ from plotly.subplots import make_subplots
 from scipy import stats
 
 from insights_engine.config import CHART_CONFIG
-from insights_engine.experiments.analyzer import BayesianResult, DiDResult
+from insights_engine.experiments.analyzer import BayesianResult, CorrelationResult, DiDResult
 
 _palette = CHART_CONFIG["color_palette"]
 
@@ -202,3 +202,122 @@ def experiment_summary_table(
         })
 
     return pd.DataFrame(rows)
+
+
+def correlation_scatter(
+    result: CorrelationResult,
+    input_label: str,
+    outcome_label: str,
+    dark: bool = True,
+) -> go.Figure:
+    """Scatter plot with OLS regression line and stats annotation."""
+    fig = go.Figure()
+
+    # Scatter points
+    fig.add_trace(go.Scatter(
+        x=result.scatter_x,
+        y=result.scatter_y,
+        mode="markers",
+        name="Daily observations",
+        marker=dict(
+            color=_palette["primary"],
+            size=7,
+            opacity=0.6,
+        ),
+        customdata=result.scatter_dates,
+        hovertemplate=(
+            "Date: %{customdata}<br>"
+            f"{input_label}: %{{x:.1f}}<br>"
+            f"{outcome_label}: %{{y:.1f}}"
+            "<extra></extra>"
+        ),
+    ))
+
+    # OLS regression line
+    x_arr = np.array(result.scatter_x)
+    x_line = np.linspace(x_arr.min(), x_arr.max(), 100)
+    y_line = result.regression_intercept + result.regression_slope * x_line
+    fig.add_trace(go.Scatter(
+        x=x_line, y=y_line,
+        mode="lines", name="Regression line",
+        line=dict(color=_palette["accent"], width=2, dash="dash"),
+    ))
+
+    # Stats annotation box
+    sig_text = "p < 0.05" if result.p_value < 0.05 else f"p = {result.p_value:.4f}"
+    annotation_text = (
+        f"r = {result.pearson_r:.3f}<br>"
+        f"R² = {result.r_squared:.3f}<br>"
+        f"{sig_text}<br>"
+        f"n = {result.n_observations}"
+    )
+    fig.add_annotation(
+        x=0.02, y=0.98,
+        xref="paper", yref="paper",
+        text=annotation_text,
+        showarrow=False,
+        align="left",
+        bgcolor="rgba(0,0,0,0.6)" if dark else "rgba(255,255,255,0.8)",
+        bordercolor=_palette["text_muted"],
+        borderwidth=1,
+        borderpad=6,
+        font=dict(size=11, color=_palette["text"]),
+    )
+
+    fig.update_xaxes(title_text=input_label)
+    fig.update_yaxes(title_text=outcome_label)
+
+    return _chart_layout(fig, f"{input_label} vs {outcome_label}", dark=dark)
+
+
+def rolling_correlation_chart(
+    result: CorrelationResult,
+    input_label: str,
+    outcome_label: str,
+    dark: bool = True,
+) -> go.Figure:
+    """Rolling Pearson r over time with reference lines."""
+    fig = go.Figure()
+
+    # Rolling r line
+    fig.add_trace(go.Scatter(
+        x=result.rolling_r_dates,
+        y=result.rolling_r_values,
+        mode="lines",
+        name="Rolling r",
+        line=dict(color=_palette["primary"], width=2),
+    ))
+
+    # Zero line (no correlation)
+    fig.add_hline(
+        y=0, line_dash="dash", line_color=_palette["text_muted"],
+        annotation_text="No correlation",
+        annotation_position="bottom right",
+    )
+
+    # Moderate threshold lines at +/- 0.3
+    fig.add_hline(
+        y=0.3, line_dash="dot", line_color=_palette["success"],
+        opacity=0.5,
+    )
+    fig.add_hline(
+        y=-0.3, line_dash="dot", line_color=_palette["danger"],
+        opacity=0.5,
+    )
+
+    # Overall r reference line
+    fig.add_hline(
+        y=result.pearson_r, line_dash="solid",
+        line_color=_palette["accent"], line_width=1,
+        annotation_text=f"Overall r = {result.pearson_r:.3f}",
+        annotation_position="top right",
+    )
+
+    fig.update_xaxes(title_text="Date")
+    fig.update_yaxes(title_text="Pearson r", range=[-1.05, 1.05])
+
+    return _chart_layout(
+        fig,
+        f"Rolling Correlation: {input_label} vs {outcome_label}",
+        dark=dark,
+    )

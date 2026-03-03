@@ -129,3 +129,35 @@ sources:
             description: Mindfulness session duration
           - name: session_count
             description: Number of sessions
+
+      - name: mfp_daily_nutrition
+        description: MyFitnessPal daily nutrition totals (aggregated from meal-level data)
+        columns:
+          - name: date
+            description: Date string (YYYY-MM-DD)
+          - name: calories
+            description: Total daily calories
+          - name: protein_g
+            description: Total protein in grams
+          - name: carbohydrates_g
+            description: Total carbohydrates in grams
+          - name: fat_g
+            description: Total fat in grams
+          - name: fiber_g
+            description: Total fiber in grams
+          - name: sugar_g
+            description: Total sugar in grams
+          - name: sodium_mg
+            description: Total sodium in milligrams
+          - name: cholesterol_mg
+            description: Total cholesterol in milligrams
+          - name: protein_pct
+            description: Percentage of calories from protein
+          - name: carb_pct
+            description: Percentage of calories from carbs
+          - name: fat_pct
+            description: Percentage of calories from fat
+          - name: meal_count
+            description: Number of meals logged that day
+          - name: meals_logged
+            description: Comma-separated list of meals logged

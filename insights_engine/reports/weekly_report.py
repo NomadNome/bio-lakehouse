@@ -31,6 +31,7 @@ from insights_engine.insights.hrv_trend import HRVTrendAnalyzer
 from insights_engine.insights.rhr_trend import RHRTrendAnalyzer
 from insights_engine.insights.temperature_trend import TemperatureTrendAnalyzer
 from insights_engine.insights.sleep_architecture import SleepArchitectureAnalyzer
+from insights_engine.insights.nutrition_analyzer import NutritionAnalyzer
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
@@ -45,6 +46,7 @@ INSIGHT_ICONS = {
     "rhr_trend": "❤️",
     "temperature_trend": "🌡️",
     "sleep_architecture": "🧠",
+    "nutrition": "🥗",
 }
 
 INSIGHT_COLORS = {
@@ -57,6 +59,7 @@ INSIGHT_COLORS = {
     "rhr_trend": "#EF4444",
     "temperature_trend": "#F97316",
     "sleep_architecture": "#3B82F6",
+    "nutrition": "#84CC16",
 }
 
 
@@ -106,6 +109,7 @@ class WeeklyReportGenerator:
             SleepArchitectureAnalyzer(athena),
             AnomalyDetectionAnalyzer(athena),
             TimingCorrelationAnalyzer(athena),
+            NutritionAnalyzer(athena),
         ]
 
     def generate(self, week_ending: date = None) -> ReportResult:
@@ -227,7 +231,12 @@ class WeeklyReportGenerator:
             ROUND(AVG(vo2_max), 1) AS avg_vo2,
             ROUND(AVG(weight_lbs), 1) AS avg_weight,
             ROUND(AVG(mindfulness_minutes), 0) AS avg_mindfulness,
-            SUM(CASE WHEN mindfulness_minutes > 0 THEN 1 ELSE 0 END) AS mindfulness_days
+            SUM(CASE WHEN mindfulness_minutes > 0 THEN 1 ELSE 0 END) AS mindfulness_days,
+            ROUND(AVG(daily_calories), 0) AS avg_calories,
+            ROUND(AVG(protein_g), 0) AS avg_protein,
+            ROUND(AVG(carbs_g), 0) AS avg_carbs,
+            ROUND(AVG(fat_g), 0) AS avg_fat,
+            SUM(CASE WHEN daily_calories IS NOT NULL THEN 1 ELSE 0 END) AS nutrition_days
         FROM bio_gold.daily_readiness_performance
         WHERE COALESCE(
                 TRY(CAST(date AS date)),
@@ -281,6 +290,16 @@ class WeeklyReportGenerator:
             if pd.notna(avg_mindfulness) and float(avg_mindfulness) > 0:
                 metrics.append({"value": f"{float(avg_mindfulness):.0f} min/day ({int(mindfulness_days)} days)", "label": "Mindfulness", "trend_class": ""})
 
+            avg_calories = row.get("avg_calories")
+            avg_protein = row.get("avg_protein")
+            nutrition_days = row.get("nutrition_days", 0)
+            if pd.notna(avg_calories) and float(avg_calories) > 0:
+                avg_carbs = row.get("avg_carbs", 0)
+                avg_fat = row.get("avg_fat", 0)
+                cal_val = f"{float(avg_calories):.0f}"
+                macro_detail = f"{int(avg_protein or 0)}P / {int(avg_carbs or 0)}C / {int(avg_fat or 0)}F"
+                metrics.append({"value": f"{cal_val} cal ({macro_detail})", "label": f"Avg Nutrition ({int(nutrition_days)} days)", "trend_class": ""})
+
             return metrics
         except Exception as e:
             print(f"  WARNING: Could not get key metrics: {e}")
@@ -301,9 +320,13 @@ class WeeklyReportGenerator:
             COALESCE(workout_count, 0) AS num_workouts,
             temperature_deviation AS temp_dev,
             deep_sleep_score,
-            rem_sleep_score
+            rem_sleep_score,
+            COALESCE(daily_calories, 0) AS calories,
+            COALESCE(protein_g, 0) AS protein_g,
+            COALESCE(carbs_g, 0) AS carbs_g,
+            COALESCE(fat_g, 0) AS fat_g
         FROM bio_gold.daily_readiness_performance
-        WHERE CAST(date AS date) BETWEEN DATE '{week_start}' AND DATE '{week_end}'
+        WHERE COALESCE(TRY(CAST(date AS date)), TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))) BETWEEN DATE '{week_start}' AND DATE '{week_end}'
         ORDER BY date
         """
         try:

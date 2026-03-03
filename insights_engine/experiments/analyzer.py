@@ -226,7 +226,7 @@ def did_analysis(
     )
 
 
-# Available metrics for experiment analysis
+# Available metrics for experiment analysis (Bayesian intervention)
 ANALYSIS_METRICS = {
     "readiness_score": "Readiness Score",
     "sleep_score": "Sleep Score",
@@ -234,4 +234,157 @@ ANALYSIS_METRICS = {
     "hrv_ms": "HRV (ms)",
     "combined_wellness_score": "Wellness Score",
     "total_output_kj": "Training Output (kJ)",
+    "daily_calories": "Daily Calories",
+    "protein_g": "Protein (g)",
+    "carbs_g": "Carbs (g)",
+    "fat_g": "Fat (g)",
+    "fiber_g": "Fiber (g)",
 }
+
+# Correlation analysis — input (independent) variables
+CORRELATION_INPUT_METRICS = {
+    "daily_calories": "Daily Calories",
+    "protein_g": "Protein (g)",
+    "carbs_g": "Carbs (g)",
+    "fat_g": "Fat (g)",
+    "fiber_g": "Fiber (g)",
+    "protein_pct": "Protein %",
+    "carb_pct": "Carb %",
+    "fat_pct": "Fat %",
+    "total_output_kj": "Training Output (kJ)",
+    "steps": "Steps",
+    "active_calories": "Active Calories",
+    "mindfulness_minutes": "Mindfulness Minutes",
+}
+
+# Correlation analysis — outcome (dependent) variables
+CORRELATION_OUTCOME_METRICS = {
+    "readiness_score": "Readiness Score",
+    "sleep_score": "Sleep Score",
+    "combined_wellness_score": "Wellness Score",
+    "resting_heart_rate_bpm": "Resting Heart Rate",
+    "hrv_ms": "HRV (ms)",
+    "deep_sleep_score": "Deep Sleep Score",
+    "total_output_kj": "Training Output",
+}
+
+
+@dataclass
+class CorrelationResult:
+    """Result of Pearson correlation analysis between two metrics."""
+    pearson_r: float
+    p_value: float
+    r_squared: float
+    n_observations: int
+    interpretation: str
+    rolling_r_values: list[float]
+    rolling_r_dates: list[str]
+    scatter_x: list[float]
+    scatter_y: list[float]
+    scatter_dates: list[str]
+    regression_slope: float
+    regression_intercept: float
+
+
+def _interpret_correlation(r: float, p: float) -> str:
+    """Generate human-readable interpretation of correlation strength."""
+    abs_r = abs(r)
+    direction = "positive" if r > 0 else "negative"
+    sig = "statistically significant" if p < 0.05 else "not statistically significant"
+
+    if abs_r < 0.1:
+        strength = "negligible"
+    elif abs_r < 0.3:
+        strength = "weak"
+    elif abs_r < 0.5:
+        strength = "moderate"
+    elif abs_r < 0.7:
+        strength = "strong"
+    else:
+        strength = "very strong"
+
+    return f"{strength.capitalize()} {direction} correlation (r={r:.3f}, {sig} at p={p:.4f})"
+
+
+def correlation_analysis(
+    athena,
+    input_col: str,
+    outcome_col: str,
+    start_date: str,
+    end_date: str,
+    rolling_window: int = 14,
+    lag_days: int = 0,
+) -> "CorrelationResult | None":
+    """
+    Compute Pearson correlation between two metrics from the Gold layer.
+
+    If lag_days > 0, shifts the outcome column forward by N days
+    (today's input → tomorrow's outcome).
+    """
+    query = f"""
+        SELECT date, {input_col}, {outcome_col}
+        FROM bio_gold.daily_readiness_performance
+        WHERE {input_col} IS NOT NULL
+          AND {outcome_col} IS NOT NULL
+          AND COALESCE(
+                TRY(CAST(date AS date)),
+                TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
+              ) BETWEEN DATE '{start_date}' AND DATE '{end_date}'
+        ORDER BY date
+    """
+    df = athena.execute_query(query)
+
+    if df.empty:
+        return None
+
+    df["date"] = pd.to_datetime(df["date"])
+    df[input_col] = pd.to_numeric(df[input_col], errors="coerce")
+    df[outcome_col] = pd.to_numeric(df[outcome_col], errors="coerce")
+    df = df.dropna(subset=[input_col, outcome_col])
+
+    if len(df) < 5:
+        return None
+
+    # Apply lag: shift outcome backward so today's input aligns with future outcome
+    if lag_days > 0:
+        df = df.sort_values("date").reset_index(drop=True)
+        df[outcome_col] = df[outcome_col].shift(-lag_days)
+        df = df.dropna(subset=[outcome_col])
+
+    if len(df) < 5:
+        return None
+
+    x = df[input_col].values
+    y = df[outcome_col].values
+
+    # Pearson r + p-value
+    r, p_val = stats.pearsonr(x, y)
+
+    # OLS regression line
+    slope, intercept, _, _, _ = stats.linregress(x, y)
+
+    # Rolling correlation
+    df_sorted = df.sort_values("date").reset_index(drop=True)
+    rolling_corr = (
+        df_sorted[input_col]
+        .rolling(window=rolling_window, min_periods=max(rolling_window // 2, 5))
+        .corr(df_sorted[outcome_col])
+    )
+    valid_rolling = rolling_corr.dropna()
+    rolling_r_values = valid_rolling.tolist()
+    rolling_r_dates = df_sorted.loc[valid_rolling.index, "date"].dt.strftime("%Y-%m-%d").tolist()
+
+    return CorrelationResult(
+        pearson_r=round(float(r), 4),
+        p_value=round(float(p_val), 6),
+        r_squared=round(float(r ** 2), 4),
+        n_observations=len(df),
+        interpretation=_interpret_correlation(float(r), float(p_val)),
+        rolling_r_values=rolling_r_values,
+        rolling_r_dates=rolling_r_dates,
+        scatter_x=x.tolist(),
+        scatter_y=y.tolist(),
+        scatter_dates=df_sorted["date"].dt.strftime("%Y-%m-%d").tolist(),
+        regression_slope=round(float(slope), 6),
+        regression_intercept=round(float(intercept), 4),
+    )
