@@ -149,6 +149,12 @@ hk_mindfulness AS (
     FROM bio_silver."healthkit_mindfulness"
     GROUP BY date
 ),
+nutrition AS (
+    SELECT date, calories AS daily_calories, protein_g, carbohydrates_g AS carbs_g,
+        fat_g, fiber_g, sugar_g, sodium_mg, cholesterol_mg,
+        protein_pct, carb_pct, fat_pct, meal_count, meals_logged
+    FROM bio_silver."mfp_daily_nutrition"
+),
 joined AS (
     SELECT
         COALESCE(r.date, s.date, a.date, p.date) AS date,
@@ -164,7 +170,9 @@ joined AS (
         hw.hk_workout_count, hw.hk_calories, hw.hk_workout_minutes,
         hw.hk_workout_categories, hw.hk_workout_types,
         b.weight_lbs, b.body_fat_pct, b.bmi, b.lean_body_mass_lbs,
-        m.mindfulness_minutes, m.mindfulness_session_count
+        m.mindfulness_minutes, m.mindfulness_session_count,
+        n.daily_calories, n.protein_g, n.carbs_g, n.fat_g, n.fiber_g,
+        n.sugar_g, n.sodium_mg, n.protein_pct, n.carb_pct, n.fat_pct, n.meal_count
     FROM readiness r
     FULL OUTER JOIN sleep s ON r.date = s.date
     FULL OUTER JOIN activity a ON COALESCE(r.date, s.date) = a.date
@@ -173,6 +181,7 @@ joined AS (
     LEFT JOIN hk_workouts hw ON COALESCE(r.date, s.date, a.date, p.date) = hw.date
     LEFT JOIN hk_body_deduped b ON COALESCE(r.date, s.date, a.date, p.date) = b.date
     LEFT JOIN hk_mindfulness m ON COALESCE(r.date, s.date, a.date, p.date) = m.date
+    LEFT JOIN nutrition n ON COALESCE(r.date, s.date, a.date, p.date) = n.date
 ),
 with_derived AS (
     SELECT *,
@@ -195,6 +204,9 @@ with_derived AS (
                 THEN ROUND(readiness_score * 0.6 + sleep_score * 0.4, 1)
             ELSE COALESCE(readiness_score, sleep_score)
         END AS mindfulness_adjusted_wellness,
+        CASE WHEN protein_g IS NOT NULL AND weight_lbs IS NOT NULL AND weight_lbs > 0
+            THEN ROUND(CAST(protein_g AS double) / weight_lbs, 2) ELSE NULL
+        END AS protein_per_lb,
         SUBSTRING(date, 1, 4) AS year,
         SUBSTRING(date, 6, 2) AS month
     FROM joined
