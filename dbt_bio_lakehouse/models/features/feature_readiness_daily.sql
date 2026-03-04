@@ -1,7 +1,7 @@
 {{
   config(
     materialized='table',
-    external_location='s3://bio-lakehouse-gold-069899605581/dbt/feature_readiness_daily/',
+    external_location='s3://' ~ var('gold_bucket') ~ '/dbt/feature_readiness_daily/',
     format='parquet'
   )
 }}

@@ -1,7 +1,7 @@
 {{
   config(
     materialized='table',
-    external_location='s3://bio-lakehouse-gold-069899605581/dbt/workout_recovery_windows/',
+    external_location='s3://' ~ var('gold_bucket') ~ '/dbt/workout_recovery_windows/',
     format='parquet'
   )
 }}

@@ -30,8 +30,9 @@ def get_args(argv, keys):
     return args
 
 args = get_args(sys.argv, ["gold_bucket", "athena_results_bucket"])
-GOLD_BUCKET = args.get("gold_bucket", "bio-lakehouse-gold-069899605581")
-ATHENA_RESULTS = f"s3://{args.get('athena_results_bucket', 'bio-lakehouse-athena-results-069899605581')}/"
+_acct = boto3.client("sts").get_caller_identity()["Account"]
+GOLD_BUCKET = args.get("gold_bucket", f"bio-lakehouse-gold-{_acct}")
+ATHENA_RESULTS = f"s3://{args.get('athena_results_bucket', f'bio-lakehouse-athena-results-{_acct}')}/"
 DATABASE = "bio_gold"
 
 athena = boto3.client("athena")

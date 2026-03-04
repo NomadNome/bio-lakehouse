@@ -12,6 +12,9 @@ clean-targets:
   - "target"
   - "dbt_packages"
 
+vars:
+  gold_bucket: "{{ env_var('BIO_S3_GOLD_BUCKET', 'bio-lakehouse-gold') }}"
+
 models:
   bio_lakehouse:
     staging:

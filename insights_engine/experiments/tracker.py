@@ -66,7 +66,8 @@ class ExperimentStore:
     def __init__(self, bucket: str | None = None):
         self.bucket = bucket or AWS_CONFIG.get("gold_bucket", "")
         if not self.bucket:
-            self.bucket = f"bio-lakehouse-gold-069899605581"
+            _acct = boto3.client("sts").get_caller_identity()["Account"]
+            self.bucket = f"bio-lakehouse-gold-{_acct}"
         self.s3 = boto3.client("s3", region_name=AWS_CONFIG.get("aws_region", "us-east-1"))
         self._etag: str | None = None
 
