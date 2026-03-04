@@ -89,6 +89,19 @@ WORKOUT_TSS_ESTIMATES = {
     "rest":                 {"low": 0,   "moderate": 0,   "high": 0},
 }
 
+# Body composition goal (set via env to keep personal targets out of code)
+BODY_FAT_GOAL_PCT = float(os.environ.get("BIO_BF_GOAL_PCT", "0"))
+
+OVERLOAD_THRESHOLDS = {
+    "min_weeks": 4,
+    "progression_pct": 0.02,           # >2% weekly output growth = Progressing
+    "regression_pct": -0.05,           # >5% decline = Regressing
+    "watts_change_threshold": 2,       # >2W = meaningful
+    "output_per_min_threshold": 0.1,   # >0.1 kJ/min = meaningful
+    "hr_efficiency_threshold": 0.02,   # >0.02 W/bpm = meaningful
+    "duration_bucket_size": 5,         # Round class length to nearest 5 min
+}
+
 # Athena views available in bio_gold
 GOLD_VIEWS = [
     "daily_readiness_performance",
