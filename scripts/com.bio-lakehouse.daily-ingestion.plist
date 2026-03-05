@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bio-lakehouse.daily-ingestion</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/run_daily_ingestion.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/logs/daily-ingestion.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/logs/daily-ingestion-error.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/nomathadejenkins</string>
+    </dict>
+</dict>
+</plist>

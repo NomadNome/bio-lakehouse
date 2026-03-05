@@ -1,10 +1,12 @@
 #!/bin/bash
-# Bio Lakehouse - Daily Ingestion (Steps 4-10: AWS Pipeline)
-# Generated: 2026-03-04
-# Run this from your Mac Terminal after HealthKit/Peloton parsing is complete.
-# Parsed data should already be in /tmp/healthkit_daily_csvs and /tmp/peloton_daily_split
+# Bio Lakehouse - Daily Data Ingestion (Full Pipeline)
+# Runs Steps 1-10: Parse → Upload → Normalize → Crawl → Gold → Verify → Streamlit
+# Schedule: Daily at 8:30 AM ET via launchd
+# Prereq: User must export HealthKit + Peloton to ~/Downloads each morning
 
 set -euo pipefail
+
+export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
 
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}"
 BUCKET="bio-lakehouse-bronze-${AWS_ACCOUNT_ID}"
@@ -13,36 +15,115 @@ PROJECT_DIR="$HOME/Desktop/Bio Lakehouse"
 BATCH_DATE=$(date +%Y-%m-%d)
 TODAY=$(date +%Y-%m-%d)
 YESTERDAY=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d "yesterday" +%Y-%m-%d)
+SINCE_DATE="$YESTERDAY"
+LOG_PREFIX="[$(date +%Y-%m-%d\ %H:%M:%S)]"
 
 echo "========================================"
-echo "Bio Lakehouse Daily Ingestion"
+echo "$LOG_PREFIX Bio Lakehouse Daily Ingestion"
 echo "Date: $BATCH_DATE"
 echo "========================================"
 
 # -----------------------------------------------
-# STEP 1-3: LOCAL PARSING (already done by Cowork)
-# If you need to re-run parsing, uncomment below:
+# STEP 1: Find Latest Files
 # -----------------------------------------------
-# HK_ZIP=$(ls -t ~/Downloads/export*.zip 2>/dev/null | head -1)
-# PELO_CSV=$(ls -t ~/Downloads/KnownasNoma_workouts*.csv 2>/dev/null | head -1)
-# rm -rf /tmp/healthkit_daily_parse /tmp/healthkit_daily_csvs
-# mkdir -p /tmp/healthkit_daily_parse /tmp/healthkit_daily_csvs
-# unzip -q "$HK_ZIP" -d /tmp/healthkit_daily_parse
-# SINCE_DATE=$(date -v-1d +%Y-%m-%d)
-# cd "$PROJECT_DIR"
-# .venv/bin/python scripts/parse_healthkit_export.py \
-#     --input /tmp/healthkit_daily_parse/apple_health_export/export.xml \
-#     --since "$SINCE_DATE" \
-#     --output-dir /tmp/healthkit_daily_csvs
+echo ""
+echo "--- Step 1: Find Latest Files ---"
 
-# Use bronze_staged copies (placed by Cowork) if /tmp doesn't have them
-if [ ! -d "/tmp/healthkit_daily_csvs/daily_vitals" ]; then
-    echo "Restoring parsed data from bronze_staged..."
-    rm -rf /tmp/healthkit_daily_csvs /tmp/peloton_daily_split
-    mkdir -p /tmp/healthkit_daily_csvs /tmp/peloton_daily_split
-    cp -r "$PROJECT_DIR/bronze_staged/healthkit_daily/"* /tmp/healthkit_daily_csvs/ 2>/dev/null || true
-    cp -r "$PROJECT_DIR/bronze_staged/peloton_daily/"* /tmp/peloton_daily_split/ 2>/dev/null || true
+HK_ZIP=$(ls -t ~/Downloads/export*.zip 2>/dev/null | head -1)
+PELO_CSV=$(ls -t ~/Downloads/KnownasNoma_workouts*.csv 2>/dev/null | head -1)
+
+if [ -z "$HK_ZIP" ]; then
+    echo "  ERROR: No HealthKit export found in ~/Downloads/. Please export from your phone first."
+    exit 1
 fi
+if [ -z "$PELO_CSV" ]; then
+    echo "  ERROR: No Peloton CSV found in ~/Downloads/. Please export from Peloton first."
+    exit 1
+fi
+
+# Check freshness (modified within last 25 hours)
+HK_AGE=$(( $(date +%s) - $(stat -f %m "$HK_ZIP") ))
+PELO_AGE=$(( $(date +%s) - $(stat -f %m "$PELO_CSV") ))
+
+if [ "$HK_AGE" -gt 90000 ]; then
+    echo "  WARNING: HealthKit export is $(( HK_AGE / 3600 ))h old. Expected <25h."
+    echo "  File: $HK_ZIP"
+    echo "  Continuing anyway..."
+fi
+if [ "$PELO_AGE" -gt 90000 ]; then
+    echo "  WARNING: Peloton CSV is $(( PELO_AGE / 3600 ))h old. Expected <25h."
+    echo "  File: $PELO_CSV"
+    echo "  Continuing anyway..."
+fi
+
+echo "  HealthKit: $HK_ZIP"
+echo "  Peloton:   $PELO_CSV"
+
+# -----------------------------------------------
+# STEP 2: Parse HealthKit Export
+# -----------------------------------------------
+echo ""
+echo "--- Step 2: Parse HealthKit ---"
+
+rm -rf /tmp/healthkit_daily_parse /tmp/healthkit_daily_csvs
+mkdir -p /tmp/healthkit_daily_parse /tmp/healthkit_daily_csvs
+
+echo "  Extracting export.xml from zip..."
+unzip -q -o "$HK_ZIP" "apple_health_export/export.xml" -d /tmp/healthkit_daily_parse
+
+echo "  Parsing since $SINCE_DATE..."
+cd "$PROJECT_DIR"
+.venv/bin/python scripts/parse_healthkit_export.py \
+    --input /tmp/healthkit_daily_parse/apple_health_export/export.xml \
+    --since "$SINCE_DATE" \
+    --output-dir /tmp/healthkit_daily_csvs
+
+echo "  HealthKit parse complete!"
+
+# -----------------------------------------------
+# STEP 3: Split Peloton CSV
+# -----------------------------------------------
+echo ""
+echo "--- Step 3: Split Peloton ---"
+
+rm -rf /tmp/peloton_daily_split
+.venv/bin/python3 -c "
+import csv, os
+from datetime import datetime, timedelta
+
+INPUT = '$PELO_CSV'
+OUTDIR = '/tmp/peloton_daily_split'
+SINCE = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d')
+
+os.makedirs(OUTDIR, exist_ok=True)
+
+with open(INPUT) as f:
+    reader = csv.DictReader(f)
+    rows_by_date = {}
+    for row in reader:
+        ts = row.get('Workout Timestamp', '')
+        try:
+            dt = datetime.strptime(ts[:10], '%Y-%m-%d')
+            if dt >= datetime.strptime(SINCE, '%Y-%m-%d'):
+                d = dt.strftime('%Y-%m-%d')
+                rows_by_date.setdefault(d, []).append(row)
+        except ValueError:
+            continue
+
+for date, rows in sorted(rows_by_date.items()):
+    y, m, d = date.split('-')
+    outpath = f'{OUTDIR}/year={y}/month={m}/day={d}/peloton_workouts.csv'
+    os.makedirs(os.path.dirname(outpath), exist_ok=True)
+    with open(outpath, 'w', newline='') as out:
+        w = csv.DictWriter(out, fieldnames=rows[0].keys())
+        w.writeheader()
+        w.writerows(rows)
+    print(f'  {date}: {len(rows)} workout(s)')
+
+print(f'  Total dates: {len(rows_by_date)}')
+"
+
+echo "  Peloton split complete!"
 
 # -----------------------------------------------
 # STEP 4: Upload to Bronze S3
