@@ -137,7 +137,7 @@ for type_dir in daily_vitals workouts body mindfulness; do
         [ -f "$csv_file" ] || continue
         part=$(echo "$csv_file" | grep -o 'year=.*')
         s3key="healthkit/${type_dir}/${part}"
-        aws s3 cp "$csv_file" "s3://${BUCKET}/${s3key}" --quiet --region "$REGION"
+        aws s3 cp "$csv_file" "s3://${BUCKET}/${s3key}" --quiet --sse AES256 --region "$REGION"
         echo "    Uploaded: ${s3key}"
     done
 done
@@ -148,7 +148,7 @@ for csv_file in /tmp/peloton_daily_split/year=*/month=*/day=*/*.csv; do
     [ -f "$csv_file" ] || continue
     part=$(echo "$csv_file" | grep -o 'year=.*')
     s3key="peloton/workouts/${part}"
-    aws s3 cp "$csv_file" "s3://${BUCKET}/${s3key}" --quiet --region "$REGION"
+    aws s3 cp "$csv_file" "s3://${BUCKET}/${s3key}" --quiet --sse AES256 --region "$REGION"
     echo "    Uploaded: ${s3key}"
     PELO_COUNT=$((PELO_COUNT + 1))
 done
@@ -158,14 +158,14 @@ HK_FILE_COUNT=$(find /tmp/healthkit_daily_csvs -name '*.csv' | wc -l | tr -d ' '
 cat > /tmp/hk_manifest.json <<EOF
 {"batch_id": "healthkit-${BATCH_DATE}", "source_types": ["healthkit/daily_vitals", "healthkit/workouts", "healthkit/body", "healthkit/mindfulness"], "file_count": ${HK_FILE_COUNT}}
 EOF
-aws s3 cp /tmp/hk_manifest.json "s3://${BUCKET}/healthkit/healthkit-${BATCH_DATE}_manifest.json" --quiet --region "$REGION"
+aws s3 cp /tmp/hk_manifest.json "s3://${BUCKET}/healthkit/healthkit-${BATCH_DATE}_manifest.json" --quiet --sse AES256 --region "$REGION"
 echo "    Uploaded: healthkit manifest (${HK_FILE_COUNT} files)"
 
 if [ "$PELO_COUNT" -gt 0 ]; then
     cat > /tmp/pelo_manifest.json <<EOF
 {"batch_id": "peloton-${BATCH_DATE}", "source_types": ["peloton/workouts"], "file_count": ${PELO_COUNT}}
 EOF
-    aws s3 cp /tmp/pelo_manifest.json "s3://${BUCKET}/peloton/peloton-${BATCH_DATE}_manifest.json" --quiet --region "$REGION"
+    aws s3 cp /tmp/pelo_manifest.json "s3://${BUCKET}/peloton/peloton-${BATCH_DATE}_manifest.json" --quiet --sse AES256 --region "$REGION"
     echo "    Uploaded: peloton manifest (${PELO_COUNT} files)"
 fi
 
