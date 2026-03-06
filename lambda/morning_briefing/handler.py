@@ -1,9 +1,12 @@
 """
 Bio Lakehouse - Morning Briefing Lambda Handler
 
-Triggered daily at 7 AM EST (12:00 UTC) by EventBridge.
+Invoked by run_daily_ingestion.sh after the Gold layer refreshes.
 Queries today's readiness, sleep, energy state, and workout recommendation,
 then sends a 3-4 bullet actionable summary via SNS email.
+
+Includes a freshness guard: if Gold data is >1 day stale, sends a
+"STALE DATA — Action Needed" alert instead of the normal briefing.
 
 No charts — just the actionable takeaway for the morning.
 """
@@ -11,7 +14,7 @@ No charts — just the actionable takeaway for the morning.
 import json
 import os
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import boto3
 
@@ -121,6 +124,18 @@ def build_briefing():
 
     latest_date = "?"
 
+    # Freshness check — if Gold data is >1 day stale, return alert instead
+    if latest_rows:
+        latest_date = latest_rows[0].get("date", "")
+        yesterday_str = (date.today() - timedelta(days=1)).isoformat()
+        if latest_date < yesterday_str:
+            days_behind = (date.today() - date.fromisoformat(latest_date)).days
+            print(f"STALE DATA: latest={latest_date}, {days_behind} day(s) behind")
+            return latest_date, [
+                f"DATA STALE — Gold data is {days_behind} day(s) behind (latest: {latest_date}).",
+                "Action needed: export HealthKit + Peloton and run the daily ingestion pipeline.",
+            ]
+
     # Bullet 1: Readiness + Sleep summary
     if latest_rows:
         r = latest_rows[0]
@@ -179,8 +194,13 @@ def publish_briefing(latest_date, bullets):
         print("No SNS_TOPIC_ARN configured, skipping publish")
         return
 
+    is_stale = any("DATA STALE" in b for b in bullets)
     today = datetime.now(timezone.utc).strftime("%A, %b %d")
-    subject = f"Morning Briefing - {today}"
+    subject = (
+        f"STALE DATA — Action Needed ({today})"
+        if is_stale
+        else f"Morning Briefing - {today}"
+    )
 
     body_lines = [
         f"Good morning! Here's your bio-optimization briefing.",

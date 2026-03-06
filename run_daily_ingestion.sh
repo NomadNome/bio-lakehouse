@@ -1,6 +1,6 @@
 #!/bin/bash
 # Bio Lakehouse - Daily Data Ingestion (Full Pipeline)
-# Runs Steps 1-10: Parse → Upload → Normalize → Crawl → Gold → Verify → Streamlit
+# Runs Steps 1-11: Parse → Upload → Normalize → Crawl → Gold → Verify → Streamlit → Briefing
 # Schedule: Daily at 8:30 AM ET via launchd
 # Prereq: User must export HealthKit + Peloton to ~/Downloads each morning
 
@@ -311,6 +311,29 @@ echo "--- Step 10: Restart Streamlit ---"
 
 cd "$PROJECT_DIR"
 bash run_streamlit.sh
+
+# -----------------------------------------------
+# STEP 11: Send Morning Briefing
+# -----------------------------------------------
+echo ""
+echo "--- Step 11: Morning Briefing ---"
+
+RESPONSE=$(aws lambda invoke \
+    --function-name bio-lakehouse-morning-briefing \
+    --region "$REGION" \
+    --payload '{}' \
+    --cli-binary-format raw-in-base64-out \
+    /tmp/briefing_response.json \
+    --output text --query 'StatusCode' 2>/dev/null || echo "SKIP")
+
+if [ "$RESPONSE" = "200" ]; then
+    echo "  Morning briefing sent!"
+elif [ "$RESPONSE" = "SKIP" ]; then
+    echo "  Morning briefing Lambda not deployed yet — skipping."
+else
+    echo "  WARNING: Morning briefing returned status $RESPONSE"
+    cat /tmp/briefing_response.json 2>/dev/null
+fi
 
 echo ""
 echo "========================================"

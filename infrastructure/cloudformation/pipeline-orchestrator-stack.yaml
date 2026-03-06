@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Bio Lakehouse - Pipeline Orchestrator
+  Triggered when the Oura normalizer Glue job succeeds. Chains:
+  Silver crawler -> Gold refresh -> Gold crawler -> Morning Briefing.
+  Skips if manual pipeline (run_daily_ingestion.sh) is running.
+
+Parameters:
+  ProjectPrefix:
+    Type: String
+    Default: bio-lakehouse
+
+Resources:
+
+  # -------------------------------------------------------
+  # IAM Role
+  # -------------------------------------------------------
+  PipelineOrchestratorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectPrefix}-pipeline-orchestrator-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: !Sub '${ProjectPrefix}-pipeline-orchestrator-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Glue: start/monitor jobs and crawlers
+              - Effect: Allow
+                Action:
+                  - 'glue:StartJobRun'
+                  - 'glue:GetJobRun'
+                  - 'glue:GetJobRuns'
+                  - 'glue:StartCrawler'
+                  - 'glue:GetCrawler'
+                Resource: '*'
+              # Lambda: invoke morning briefing
+              - Effect: Allow
+                Action:
+                  - 'lambda:InvokeFunction'
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectPrefix}-morning-briefing'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectPrefix
+
+  # -------------------------------------------------------
+  # Lambda Function
+  # -------------------------------------------------------
+  PipelineOrchestratorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectPrefix}-pipeline-orchestrator'
+      Runtime: python3.11
+      Handler: handler.lambda_handler
+      Role: !GetAtt PipelineOrchestratorRole.Arn
+      Timeout: 900
+      MemorySize: 256
+      Code:
+        S3Bucket: !Sub '${ProjectPrefix}-gold-${AWS::AccountId}'
+        S3Key: lambda/pipeline_orchestrator.zip
+      Environment:
+        Variables:
+          SILVER_CRAWLER: !Sub '${ProjectPrefix}-silver-crawler'
+          GOLD_REFRESH_JOB: !Sub '${ProjectPrefix}-dbt-gold-refresh'
+          GOLD_CRAWLER: !Sub '${ProjectPrefix}-gold-crawler'
+          MORNING_BRIEFING_FN: !Sub '${ProjectPrefix}-morning-briefing'
+          HK_NORMALIZER: !Sub '${ProjectPrefix}-healthkit-normalizer'
+          PELOTON_NORMALIZER: !Sub '${ProjectPrefix}-peloton-normalizer'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectPrefix
+
+  # -------------------------------------------------------
+  # EventBridge Rule — Oura normalizer SUCCEEDED
+  # -------------------------------------------------------
+  OuraNormalizerSuccessRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectPrefix}-oura-normalizer-success'
+      Description: Trigger pipeline orchestrator when Oura normalizer succeeds
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.glue
+        detail-type:
+          - Glue Job State Change
+        detail:
+          jobName:
+            - !Sub '${ProjectPrefix}-oura-normalizer'
+          state:
+            - SUCCEEDED
+      Targets:
+        - Id: PipelineOrchestratorTarget
+          Arn: !GetAtt PipelineOrchestratorFunction.Arn
+
+  OuraNormalizerSuccessPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PipelineOrchestratorFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt OuraNormalizerSuccessRule.Arn
+
+Outputs:
+  PipelineOrchestratorArn:
+    Description: Pipeline orchestrator Lambda ARN
+    Value: !GetAtt PipelineOrchestratorFunction.Arn

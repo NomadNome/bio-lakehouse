@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Bio-Optimization Data Lakehouse - Morning Briefing
-  Lambda function, EventBridge daily schedule (7 AM EST), and SNS topic
-  for a concise morning health summary email.
+  Lambda function and SNS topic for a concise morning health summary email.
+  Invoked by run_daily_ingestion.sh after the Gold layer refreshes (event-driven).
 
 Parameters:
   Environment:
@@ -121,28 +121,6 @@ Resources:
       Tags:
         - Key: Project
           Value: !Ref ProjectPrefix
-
-  # -------------------------------------------------------
-  # EventBridge Rule - Daily at 7:00 AM EST (12:00 UTC)
-  # -------------------------------------------------------
-  DailyMorningBriefingRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub '${ProjectPrefix}-daily-morning-briefing'
-      Description: Daily morning briefing at 7 AM EST
-      ScheduleExpression: 'cron(0 12 * * ? *)'
-      State: ENABLED
-      Targets:
-        - Id: MorningBriefingLambdaTarget
-          Arn: !GetAtt MorningBriefingFunction.Arn
-
-  DailyMorningBriefingPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref MorningBriefingFunction
-      Action: 'lambda:InvokeFunction'
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt DailyMorningBriefingRule.Arn
 
 Outputs:
   MorningBriefingTopicArn:
