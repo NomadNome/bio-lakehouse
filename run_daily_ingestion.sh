@@ -177,19 +177,31 @@ echo "  Bronze upload complete!"
 echo ""
 echo "--- Step 5: Run Glue Normalizers ---"
 
-OURA_RUN=$(aws glue start-job-run --job-name bio-lakehouse-oura-normalizer --region "$REGION" \
-    --arguments '{"--source_bucket":"bio-lakehouse-bronze-${AWS_ACCOUNT_ID}","--source_type":"oura"}' \
-    --query 'JobRunId' --output text)
+# Helper: start a Glue job or attach to an already-running one
+start_or_attach() {
+    local job_name="$1"; shift
+    local run_id
+    run_id=$(aws glue start-job-run --job-name "$job_name" --region "$REGION" "$@" \
+        --query 'JobRunId' --output text 2>/dev/null)
+    if [ $? -eq 0 ] && [ -n "$run_id" ]; then
+        echo "$run_id"
+        return
+    fi
+    # ConcurrentRunsExceededException — attach to the existing run
+    aws glue get-job-runs --job-name "$job_name" --region "$REGION" --max-results 1 \
+        --query 'JobRuns[0].Id' --output text
+}
 
-HK_RUN=$(aws glue start-job-run --job-name bio-lakehouse-healthkit-normalizer --region "$REGION" \
-    --arguments '{"--source_bucket":"bio-lakehouse-bronze-${AWS_ACCOUNT_ID}","--source_type":"healthkit"}' \
-    --query 'JobRunId' --output text)
+OURA_RUN=$(start_or_attach bio-lakehouse-oura-normalizer \
+    --arguments '{"--source_bucket":"bio-lakehouse-bronze-'"${AWS_ACCOUNT_ID}"'","--source_type":"oura"}')
 
-PELO_RUN=$(aws glue start-job-run --job-name bio-lakehouse-peloton-normalizer --region "$REGION" \
-    --arguments '{"--source_bucket":"bio-lakehouse-bronze-${AWS_ACCOUNT_ID}","--source_type":"peloton"}' \
-    --query 'JobRunId' --output text)
+HK_RUN=$(start_or_attach bio-lakehouse-healthkit-normalizer \
+    --arguments '{"--source_bucket":"bio-lakehouse-bronze-'"${AWS_ACCOUNT_ID}"'","--source_type":"healthkit"}')
 
-echo "  Started: Oura=$OURA_RUN  HK=$HK_RUN  Peloton=$PELO_RUN"
+PELO_RUN=$(start_or_attach bio-lakehouse-peloton-normalizer \
+    --arguments '{"--source_bucket":"bio-lakehouse-bronze-'"${AWS_ACCOUNT_ID}"'","--source_type":"peloton"}')
+
+echo "  Started/attached: Oura=$OURA_RUN  HK=$HK_RUN  Peloton=$PELO_RUN"
 echo "  Polling (expect ~13 min for HealthKit)..."
 
 while true; do
