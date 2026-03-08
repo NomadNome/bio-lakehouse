@@ -88,7 +88,7 @@ echo "--- Step 3: Split Peloton ---"
 
 rm -rf /tmp/peloton_daily_split
 .venv/bin/python3 -c "
-import csv, os
+import csv, os, re
 from datetime import datetime, timedelta
 
 INPUT = '$PELO_CSV'
@@ -97,11 +97,16 @@ SINCE = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d')
 
 os.makedirs(OUTDIR, exist_ok=True)
 
+# Normalize header: 'Workout Timestamp' -> 'workout_timestamp'
+def snake(name):
+    return re.sub(r'[.\s/()]+', '_', name.strip()).lower().strip('_')
+
 with open(INPUT) as f:
     reader = csv.DictReader(f)
     rows_by_date = {}
-    for row in reader:
-        ts = row.get('Workout Timestamp', '')
+    for raw_row in reader:
+        row = {snake(k): v for k, v in raw_row.items()}
+        ts = row.get('workout_timestamp', '')
         try:
             dt = datetime.strptime(ts[:10], '%Y-%m-%d')
             if dt >= datetime.strptime(SINCE, '%Y-%m-%d'):
@@ -152,6 +157,12 @@ for csv_file in /tmp/peloton_daily_split/year=*/month=*/day=*/*.csv; do
     echo "    Uploaded: ${s3key}"
     PELO_COUNT=$((PELO_COUNT + 1))
 done
+
+# Also upload the raw Peloton CSV (normalizer reads the top-level bulk export)
+echo "  Uploading raw Peloton CSV..."
+PELO_BASENAME=$(basename "$PELO_CSV")
+aws s3 cp "$PELO_CSV" "s3://${BUCKET}/peloton/workouts/${PELO_BASENAME}" --quiet --sse AES256 --region "$REGION"
+echo "    Uploaded: peloton/workouts/${PELO_BASENAME}"
 
 echo "  Uploading batch manifests..."
 HK_FILE_COUNT=$(find /tmp/healthkit_daily_csvs -name '*.csv' | wc -l | tr -d ' ')

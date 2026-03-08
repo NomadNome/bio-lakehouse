@@ -90,7 +90,7 @@ nutrition AS (
 
 joined AS (
     SELECT
-        COALESCE(r.date, s.date, a.date, p.date) AS date,
+        COALESCE(r.date, s.date, a.date, p.date, v.date) AS date,
         r.readiness_score,
         r.hrv_balance_score,
         r.resting_hr_score,
@@ -146,11 +146,11 @@ joined AS (
     FULL OUTER JOIN sleep s ON r.date = s.date
     FULL OUTER JOIN activity a ON COALESCE(r.date, s.date) = a.date
     FULL OUTER JOIN peloton p ON COALESCE(r.date, s.date, a.date) = p.date
-    LEFT JOIN hk_vitals_deduped v ON COALESCE(r.date, s.date, a.date, p.date) = v.date
-    LEFT JOIN hk_workouts hw ON COALESCE(r.date, s.date, a.date, p.date) = hw.date
-    LEFT JOIN hk_body_deduped b ON COALESCE(r.date, s.date, a.date, p.date) = b.date
-    LEFT JOIN hk_mindfulness m ON COALESCE(r.date, s.date, a.date, p.date) = m.date
-    LEFT JOIN nutrition n ON COALESCE(r.date, s.date, a.date, p.date) = n.date
+    FULL OUTER JOIN hk_vitals_deduped v ON COALESCE(r.date, s.date, a.date, p.date) = v.date
+    LEFT JOIN hk_workouts hw ON COALESCE(r.date, s.date, a.date, p.date, v.date) = hw.date
+    LEFT JOIN hk_body_deduped b ON COALESCE(r.date, s.date, a.date, p.date, v.date) = b.date
+    LEFT JOIN hk_mindfulness m ON COALESCE(r.date, s.date, a.date, p.date, v.date) = m.date
+    LEFT JOIN nutrition n ON COALESCE(r.date, s.date, a.date, p.date, v.date) = n.date
 ),
 
 with_derived AS (
