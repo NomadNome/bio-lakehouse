@@ -73,6 +73,64 @@ def safe_float(value, default=None):
         return default
 
 
+def build_energy_guidance(e):
+    """Build dynamic, context-specific energy guidance from today's metrics."""
+    state = e.get("energy_state", "unknown")
+    readiness = safe_float(e.get("readiness_score"))
+    sleep = safe_float(e.get("sleep_score"))
+    hrv_bal = safe_float(e.get("hrv_balance"))
+    r_delta = safe_float(e.get("readiness_delta"), 0)
+    s_delta = safe_float(e.get("sleep_delta"), 0)
+    r_3day = safe_float(e.get("readiness_3day_avg"))
+    had_workout = e.get("had_workout", "false") == "true"
+
+    # Trend description
+    trend_parts = []
+    if r_delta >= 5:
+        trend_parts.append(f"readiness up {r_delta:+.0f}")
+    elif r_delta <= -5:
+        trend_parts.append(f"readiness down {r_delta:+.0f}")
+    if s_delta >= 5:
+        trend_parts.append(f"sleep up {s_delta:+.0f}")
+    elif s_delta <= -5:
+        trend_parts.append(f"sleep down {s_delta:+.0f}")
+    trend = f" ({', '.join(trend_parts)} vs yesterday)" if trend_parts else ""
+
+    # 3-day context
+    streak = ""
+    if r_3day is not None and readiness is not None:
+        if r_3day >= 85 and readiness >= 85:
+            streak = " You've been consistently high — ride the wave."
+        elif r_3day < 65:
+            streak = " Multiple low days — prioritize recovery."
+
+    # State-specific guidance with actual numbers
+    if state == "peak":
+        base = f"Readiness {readiness:.0f}, sleep {sleep:.0f}"
+        if hrv_bal is not None:
+            base += f", HRV balance {hrv_bal:.0f}"
+        base += f".{trend} All systems go — push hard today (HIIT, heavy lifts, sprints)."
+        return base + streak
+    elif state == "high":
+        base = f"Readiness {readiness:.0f}, sleep {sleep:.0f}.{trend}"
+        base += " Strong day — great for hard cycling, bootcamp, or deep focus work."
+        return base + streak
+    elif state == "moderate":
+        base = f"Readiness {readiness:.0f}, sleep {sleep:.0f}.{trend}"
+        base += " Solid but not peak — good for endurance rides, strength training, or steady work."
+        return base + streak
+    elif state == "low":
+        base = f"Readiness {readiness:.0f}, sleep {sleep:.0f}.{trend}"
+        base += " Keep it light — yoga, stretching, or an easy walk."
+        return base + streak
+    else:  # recovery_needed
+        base = f"Readiness {readiness:.0f}" if readiness else "Low recovery"
+        if sleep is not None:
+            base += f", sleep {sleep:.0f}"
+        base += f".{trend} Rest day recommended — gentle meditation or total rest."
+        return base + streak
+
+
 def build_briefing():
     """Query latest metrics and build the morning briefing bullets."""
     bullets = []
@@ -93,9 +151,11 @@ def build_briefing():
     LIMIT 1
     """
 
-    # Query 2: Energy state for today
+    # Query 2: Energy state with context for dynamic guidance
     energy_sql = """
-    SELECT date, energy_state, guidance
+    SELECT date, energy_state, readiness_score, sleep_score, hrv_balance,
+           readiness_delta, sleep_delta, readiness_3day_avg, sleep_3day_avg,
+           had_workout, output_zone
     FROM bio_gold.energy_state
     ORDER BY date DESC
     LIMIT 1
@@ -159,13 +219,12 @@ def build_briefing():
             vitals_str = f" ({', '.join(vitals)})" if vitals else ""
             bullets.append(f"{' | '.join(parts)}{vitals_str}")
 
-    # Bullet 2: Energy state
+    # Bullet 2: Energy state with dynamic context
     if energy_rows:
         e = energy_rows[0]
         state = e.get("energy_state", "unknown")
-        guidance = e.get("guidance", "")
         state_display = state.replace("_", " ").title()
-        bullets.append(f"Energy: {state_display} -- {guidance}")
+        bullets.append(f"Energy: {state_display} -- {build_energy_guidance(e)}")
 
     # Bullet 3: Workout recommendation
     if workout_rows:
