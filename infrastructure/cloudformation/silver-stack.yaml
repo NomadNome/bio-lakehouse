@@ -189,7 +189,7 @@ Resources:
           - Path: !Sub 's3://${SilverBucket}/healthkit_body/'
           - Path: !Sub 's3://${SilverBucket}/healthkit_mindfulness/'
       SchemaChangePolicy:
-        UpdateBehavior: UPDATE_IN_DATABASE
+        UpdateBehavior: LOG
         DeleteBehavior: LOG
       Tags:
         Project: !Ref ProjectPrefix

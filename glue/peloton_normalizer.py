@@ -160,6 +160,45 @@ df = (
     .withColumn("month", F.date_format("workout_date", "MM"))
 )
 
+# Pin output schema: fixed columns, fixed order, fixed types.
+# This prevents the crawler from detecting "schema changes" on every run.
+OUTPUT_COLUMNS = [
+    F.col("workout_timestamp").cast("string"),
+    F.col("live_on-demand").cast("string").alias("live_on_demand"),
+    F.col("instructor_name").cast("string"),
+    F.col("length_minutes").cast("int"),
+    F.col("fitness_discipline").cast("string"),
+    F.col("type").cast("string"),
+    F.col("title").cast("string"),
+    F.col("class_timestamp").cast("string"),
+    F.col("total_output").cast("int"),
+    F.col("avg_watts").cast("int"),
+    F.col("avg_resistance").cast("string"),
+    F.col("avg_cadence_rpm").cast("int"),
+    F.col("avg_speed_mph").cast("double"),
+    F.col("distance_mi").cast("double"),
+    F.col("calories_burned").cast("int"),
+    F.col("avg_heartrate").cast("int"),
+    F.col("avg_incline").cast("string"),
+    F.col("avg_pace_min_mi").cast("string"),
+    F.col("workout_date").cast("timestamp"),
+    F.col("workout_time").cast("string"),
+    F.col("avg_resistance_pct").cast("int"),
+    F.col("workout_timestamp_utc").cast("timestamp"),
+    F.col("workout_category").cast("string"),
+    F.col("output_per_minute").cast("double"),
+    F.col("hr_zone").cast("int"),
+    F.col("total_output_kj").cast("double"),
+]
+
+# Add any missing columns as null with the correct type before selecting
+for c in ["live_on-demand", "avg_incline", "avg_pace_min_mi",
+           "avg_resistance", "avg_resistance_pct"]:
+    if c not in df.columns:
+        df = df.withColumn(c, F.lit(None).cast("string"))
+
+df = df.select(*OUTPUT_COLUMNS, F.col("year"), F.col("month"))
+
 # Write to Silver
 df.write.mode("overwrite").partitionBy("year", "month").parquet(
     f"s3://{SILVER_BUCKET}/peloton_workouts/"
