@@ -108,6 +108,15 @@ def process_nutrition():
         if col_name in df.columns:
             df = df.withColumn(col_name, F.col(col_name).cast(DoubleType()))
 
+    # Deduplicate overlapping CSV exports — same (date, meal) can appear in
+    # multiple Bronze files when MFP exports cover overlapping date ranges.
+    dedup_cols = ["date", "meal"] if "meal" in df.columns else ["date"]
+    before_count = df.count()
+    df = df.dropDuplicates(dedup_cols)
+    after_count = df.count()
+    if before_count != after_count:
+        print(f"Deduplicated: {before_count} → {after_count} rows (removed {before_count - after_count} duplicates)")
+
     # Aggregate meal-level rows to daily totals
     agg_exprs = []
     for col_name in NUMERIC_COLS:

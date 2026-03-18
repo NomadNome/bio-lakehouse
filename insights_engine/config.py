@@ -102,6 +102,19 @@ OVERLOAD_THRESHOLDS = {
     "duration_bucket_size": 5,         # Round class length to nearest 5 min
 }
 
+# Correlation Discovery Engine configuration
+DISCOVERY_CONFIG = {
+    "default_lookback_days": 180,
+    "default_min_rho": 0.25,
+    "default_alpha": 0.05,
+    "max_lags": 4,                     # Lags 0, 1, 2, 3
+    "min_samples_correlation": 20,
+    "min_samples_threshold": 10,
+    "max_results_correlations": 50,
+    "max_results_thresholds": 20,
+    "s3_prefix": "discoveries/weekly",
+}
+
 # Athena views available in bio_gold
 GOLD_VIEWS = [
     "daily_readiness_performance",

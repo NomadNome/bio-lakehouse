@@ -29,8 +29,17 @@ echo "========================================"
 echo ""
 echo "--- Step 1: Find Latest Files ---"
 
-HK_ZIP=$(ls -t ~/Downloads/export*.zip 2>/dev/null | head -1)
-PELO_CSV=$(ls -t ~/Downloads/KnownasNoma_workouts*.csv 2>/dev/null | head -1)
+INBOX="$PROJECT_DIR/inbox"
+
+# Check inbox first (launchd-safe), fallback to ~/Downloads (manual runs)
+HK_ZIP=$(ls -t "$INBOX"/export*.zip 2>/dev/null | head -1)
+[ -z "$HK_ZIP" ] && HK_ZIP=$(ls -t ~/Downloads/export*.zip 2>/dev/null | head -1)
+
+PELO_CSV=$(ls -t "$INBOX"/KnownasNoma_workouts*.csv 2>/dev/null | head -1)
+[ -z "$PELO_CSV" ] && PELO_CSV=$(ls -t ~/Downloads/KnownasNoma_workouts*.csv 2>/dev/null | head -1)
+
+MFP_CSV=$(ls -t "$INBOX"/Nutrition-Summary*.csv 2>/dev/null | head -1)
+[ -z "$MFP_CSV" ] && MFP_CSV=$(ls -t ~/Downloads/Nutrition-Summary*.csv 2>/dev/null | head -1 || true)
 
 if [ -z "$HK_ZIP" ]; then
     echo "  ERROR: No HealthKit export found in ~/Downloads/. Please export from your phone first."
@@ -58,6 +67,11 @@ fi
 
 echo "  HealthKit: $HK_ZIP"
 echo "  Peloton:   $PELO_CSV"
+if [ -n "$MFP_CSV" ]; then
+    echo "  MFP:       $MFP_CSV"
+else
+    echo "  MFP:       (none found — skipping)"
+fi
 
 # -----------------------------------------------
 # STEP 2: Parse HealthKit Export
@@ -164,6 +178,14 @@ PELO_BASENAME=$(basename "$PELO_CSV")
 aws s3 cp "$PELO_CSV" "s3://${BUCKET}/peloton/workouts/${PELO_BASENAME}" --quiet --sse AES256 --region "$REGION"
 echo "    Uploaded: peloton/workouts/${PELO_BASENAME}"
 
+if [ -n "$MFP_CSV" ]; then
+    echo "  Uploading MFP CSV..."
+    MFP_BASENAME=$(basename "$MFP_CSV")
+    aws s3 cp "$MFP_CSV" "s3://${BUCKET}/mfp/nutrition/${MFP_BASENAME}" \
+        --quiet --sse AES256 --region "$REGION"
+    echo "    Uploaded: mfp/nutrition/${MFP_BASENAME}"
+fi
+
 echo "  Uploading batch manifests..."
 HK_FILE_COUNT=$(find /tmp/healthkit_daily_csvs -name '*.csv' | wc -l | tr -d ' ')
 cat > /tmp/hk_manifest.json <<EOF
@@ -212,7 +234,10 @@ HK_RUN=$(start_or_attach bio-lakehouse-healthkit-normalizer \
 PELO_RUN=$(start_or_attach bio-lakehouse-peloton-normalizer \
     --arguments '{"--source_bucket":"bio-lakehouse-bronze-'"${AWS_ACCOUNT_ID}"'","--source_type":"peloton"}')
 
-echo "  Started/attached: Oura=$OURA_RUN  HK=$HK_RUN  Peloton=$PELO_RUN"
+MFP_RUN=$(start_or_attach bio-lakehouse-mfp-normalizer \
+    --arguments '{"--bronze_bucket":"bio-lakehouse-bronze-'"${AWS_ACCOUNT_ID}"'","--silver_bucket":"bio-lakehouse-silver-'"${AWS_ACCOUNT_ID}"'"}')
+
+echo "  Started/attached: Oura=$OURA_RUN  HK=$HK_RUN  Peloton=$PELO_RUN  MFP=$MFP_RUN"
 echo "  Polling (expect ~13 min for HealthKit)..."
 
 while true; do
@@ -222,10 +247,12 @@ while true; do
         --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
     PELO=$(aws glue get-job-run --job-name bio-lakehouse-peloton-normalizer --run-id "$PELO_RUN" \
         --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
-    echo "  $(date +%H:%M:%S) Oura=$OURA  HK=$HK  Peloton=$PELO"
+    MFP=$(aws glue get-job-run --job-name bio-lakehouse-mfp-normalizer --run-id "$MFP_RUN" \
+        --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
+    echo "  $(date +%H:%M:%S) Oura=$OURA  HK=$HK  Peloton=$PELO  MFP=$MFP"
 
     FAILED=0
-    for state in "$OURA" "$HK" "$PELO"; do
+    for state in "$OURA" "$HK" "$PELO" "$MFP"; do
         if [ "$state" = "FAILED" ]; then
             FAILED=1
         fi
@@ -237,7 +264,8 @@ while true; do
 
     if [ "$OURA" != "RUNNING" ] && [ "$OURA" != "STARTING" ] && \
        [ "$HK" != "RUNNING" ] && [ "$HK" != "STARTING" ] && \
-       [ "$PELO" != "RUNNING" ] && [ "$PELO" != "STARTING" ]; then
+       [ "$PELO" != "RUNNING" ] && [ "$PELO" != "STARTING" ] && \
+       [ "$MFP" != "RUNNING" ] && [ "$MFP" != "STARTING" ]; then
         break
     fi
     sleep 20
@@ -333,7 +361,11 @@ echo ""
 echo "--- Step 10: Restart Streamlit ---"
 
 cd "$PROJECT_DIR"
-bash run_streamlit.sh
+# Kill existing Streamlit and restart in background (non-blocking)
+/usr/sbin/lsof -ti :8501 | xargs kill -9 2>/dev/null || true
+sleep 1
+bash run_streamlit.sh &
+echo "  Streamlit started (PID $!)"
 
 # -----------------------------------------------
 # STEP 11: Send Morning Briefing
@@ -356,6 +388,20 @@ elif [ "$RESPONSE" = "SKIP" ]; then
 else
     echo "  WARNING: Morning briefing returned status $RESPONSE"
     cat /tmp/briefing_response.json 2>/dev/null
+fi
+
+# -----------------------------------------------
+# STEP 12: Weekly Correlation Discovery (Sundays only)
+# -----------------------------------------------
+if [ "$(date +%u)" = "7" ]; then
+    echo ""
+    echo "--- Step 12: Weekly Correlation Discovery ---"
+    cd "$PROJECT_DIR"
+    PYTHONPATH=$(pwd) .venv/bin/python scripts/run_correlation_discovery.py 2>&1 | tail -20
+    echo "  Weekly discovery complete."
+else
+    echo ""
+    echo "--- Step 12: Weekly Correlation Discovery (skipped — not Sunday) ---"
 fi
 
 echo ""

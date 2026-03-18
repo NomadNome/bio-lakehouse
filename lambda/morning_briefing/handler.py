@@ -26,6 +26,9 @@ sns = boto3.client("sns")
 SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
 ATHENA_DATABASE = os.environ.get("ATHENA_DATABASE", "bio_gold")
 ATHENA_RESULTS_BUCKET = os.environ.get("ATHENA_RESULTS_BUCKET", "")
+GOLD_BUCKET = os.environ.get("GOLD_BUCKET", "")
+
+s3 = boto3.client("s3")
 
 
 def run_athena_query(sql):
@@ -244,7 +247,59 @@ def build_briefing():
                 f"7-day avg: {avg_tss_7d:.0f}"
             )
 
+    # Bullet 5: Latest correlation discovery (if < 8 days old)
+    discovery_bullet = _get_latest_discovery()
+    if discovery_bullet:
+        bullets.append(f"Discovery: {discovery_bullet}")
+
     return latest_date, bullets
+
+
+def _get_latest_discovery():
+    """Read the latest correlation discovery narrative from S3 (if recent)."""
+    if not GOLD_BUCKET:
+        return None
+    try:
+        # List discovery prefixes to find the most recent
+        response = s3.list_objects_v2(
+            Bucket=GOLD_BUCKET,
+            Prefix="discoveries/weekly/",
+            Delimiter="/",
+        )
+        prefixes = response.get("CommonPrefixes", [])
+        if not prefixes:
+            return None
+
+        # Get most recent date
+        dates = []
+        for p in prefixes:
+            parts = p["Prefix"].rstrip("/").split("/")
+            if parts:
+                dates.append(parts[-1])
+        if not dates:
+            return None
+
+        latest_date_str = sorted(dates, reverse=True)[0]
+
+        # Check freshness (< 8 days old)
+        from datetime import date as _date
+        try:
+            run_date = _date.fromisoformat(latest_date_str)
+            if (_date.today() - run_date).days > 7:
+                return None
+        except ValueError:
+            return None
+
+        # Load the JSON
+        key = f"discoveries/weekly/{latest_date_str}/discoveries.json"
+        obj = s3.get_object(Bucket=GOLD_BUCKET, Key=key)
+        data = json.loads(obj["Body"].read().decode("utf-8"))
+        narrative = data.get("top_finding_narrative", "")
+        if narrative and narrative != "No significant discoveries found in this scan.":
+            return narrative
+    except Exception as e:
+        print(f"Could not load discovery: {e}")
+    return None
 
 
 def publish_briefing(latest_date, bullets):

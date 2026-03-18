@@ -101,7 +101,7 @@ with st.sidebar:
     st.title("🧬 Bio Insights")
     page = st.radio(
         "Navigate",
-        ["💬 Ask", "📊 Insights", "📋 Weekly Report", "🔮 What-If", "🎯 Predictions", "🧪 Experiments", "📤 Export"],
+        ["💬 Ask", "📊 Insights", "📋 Weekly Report", "🔮 What-If", "🎯 Predictions", "🧪 Experiments", "🔍 Discoveries", "📤 Export"],
         label_visibility="collapsed",
     )
     st.divider()
@@ -862,6 +862,16 @@ elif page == "📋 Weekly Report":
                 except Exception as e:
                     st.error(f"Report generation failed: {e}")
 
+        if st.session_state.get("latest_report_html"):
+            from insights_engine.reports.delivery import generate_pdf_bytes
+            pdf_bytes = generate_pdf_bytes(st.session_state["latest_report_html"])
+            st.download_button(
+                label="📥 Download PDF",
+                data=pdf_bytes,
+                file_name="weekly-report.pdf",
+                mime="application/pdf",
+            )
+
     # Display report
     report_html = st.session_state.get("latest_report_html")
     if report_html:
@@ -877,6 +887,7 @@ elif page == "📋 Weekly Report":
         local_report = Path("reports_output/weekly-report.html")
         if local_report.exists():
             html = local_report.read_text()
+            st.session_state["latest_report_html"] = html
             st.components.v1.html(html, height=1200, scrolling=True)
         else:
             st.info("No report generated yet. Click 'Generate New Report' to create one.")
@@ -1844,7 +1855,212 @@ elif page == "🧪 Experiments":
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# PAGE 7: FHIR EXPORT
+# PAGE 7: CORRELATION DISCOVERIES
+# ══════════════════════════════════════════════════════════════════════════
+elif page == "🔍 Discoveries":
+    st.header("Correlation Discovery Engine")
+    st.caption(
+        "Automated scan of all metric pairs for significant correlations and threshold effects."
+    )
+
+    from insights_engine.insights.correlation_discovery import (
+        CorrelationDiscoveryEngine, DiscoveryResult, _format_metric,
+    )
+    from insights_engine.insights.discovery_persistence import DiscoveryStore
+    import plotly.graph_objects as _pgo
+    import numpy as _np
+
+    # ── Controls Row ────────────────────────────────────────────────────
+    ctrl_c1, ctrl_c2, ctrl_c3, ctrl_c4 = st.columns([2, 1, 1, 1])
+
+    with ctrl_c1:
+        # Load saved runs for dropdown
+        _disc_store = DiscoveryStore()
+        _saved_runs = []
+        try:
+            _saved_runs = _disc_store.list_runs()
+        except Exception:
+            pass
+        _run_options = ["Run New Scan"] + list(reversed(_saved_runs))
+        _selected_run = st.selectbox("Saved Runs", _run_options)
+
+    with ctrl_c2:
+        _disc_lookback = st.slider("Lookback (days)", 60, 365, 180, step=30)
+
+    with ctrl_c3:
+        _disc_min_strength = st.slider("Min |rho|", 0.15, 0.60, 0.25, step=0.05)
+
+    with ctrl_c4:
+        _run_now = st.button("Run Discovery Now", type="primary")
+
+    # ── Load or Run ─────────────────────────────────────────────────────
+    _disc_result = None
+
+    if _run_now or _selected_run == "Run New Scan":
+        if _run_now:
+            with st.spinner("Scanning all metric pairs..."):
+                try:
+                    _disc_engine = CorrelationDiscoveryEngine(get_athena())
+                    # Try loading prior for new-finding detection
+                    _prior = None
+                    try:
+                        _prior = _disc_store.load_latest()
+                    except Exception:
+                        pass
+                    _disc_result = _disc_engine.discover(
+                        lookback_days=_disc_lookback,
+                        min_rho=_disc_min_strength,
+                        prior_results=_prior,
+                    )
+                    st.session_state["discovery_result"] = _disc_result
+                    # Save locally
+                    try:
+                        _disc_store.save_local(_disc_result)
+                    except Exception:
+                        pass
+                except Exception as e:
+                    st.error(f"Discovery scan failed: {e}")
+        elif "discovery_result" in st.session_state:
+            _disc_result = st.session_state["discovery_result"]
+    elif _selected_run != "Run New Scan":
+        with st.spinner(f"Loading results from {_selected_run}..."):
+            try:
+                _disc_result = _disc_store.load_by_date(_selected_run)
+            except Exception as e:
+                st.error(f"Failed to load results: {e}")
+
+    if _disc_result is None and "discovery_result" in st.session_state:
+        _disc_result = st.session_state["discovery_result"]
+
+    if _disc_result is None:
+        st.info("Click **Run Discovery Now** to scan all metric pairs, or select a saved run.")
+    else:
+        # ── Summary Metrics ─────────────────────────────────────────────
+        sm1, sm2, sm3, sm4 = st.columns(4)
+        sm1.metric("Pairs Tested", f"{_disc_result.pairs_tested:,}")
+        sm2.metric("Correlations", f"{len(_disc_result.correlations)}")
+        sm3.metric("Threshold Effects", f"{len(_disc_result.thresholds)}")
+        sm4.metric("Data Range", f"{_disc_result.total_rows} days")
+
+        # ── Top Finding ─────────────────────────────────────────────────
+        if _disc_result.top_finding_narrative:
+            st.info(f"**Top Finding:** {_disc_result.top_finding_narrative}")
+
+        # ── Tabs ────────────────────────────────────────────────────────
+        disc_tab1, disc_tab2, disc_tab3 = st.tabs(
+            ["Correlations", "Threshold Effects", "Correlation Heatmap"]
+        )
+
+        # ── Tab 1: Correlations ─────────────────────────────────────────
+        with disc_tab1:
+            if not _disc_result.correlations:
+                st.warning("No significant correlations found at current thresholds.")
+            else:
+                for _ci, _cf in enumerate(_disc_result.correlations):
+                    _direction_icon = "↑" if _cf.rho > 0 else "↓"
+                    _lag_badge = f"  `lag {_cf.lag}d`" if _cf.lag > 0 else ""
+                    _new_badge = "  `NEW`" if _cf.is_new else ""
+                    _a_label = _format_metric(_cf.metric_a)
+                    _b_label = _format_metric(_cf.metric_b)
+
+                    with st.expander(
+                        f"**{_a_label}** {_direction_icon} **{_b_label}**{_lag_badge}{_new_badge}  —  "
+                        f"rho={_cf.rho:+.3f}  |  {_cf.strength}",
+                        expanded=_ci < 3,
+                    ):
+                        _mc1, _mc2, _mc3, _mc4 = st.columns(4)
+                        _mc1.metric("Spearman rho", f"{_cf.rho:+.3f}")
+                        _mc2.metric("p (corrected)", f"{_cf.p_corrected:.4f}")
+                        _mc3.metric("Strength", _cf.strength.replace("_", " ").title())
+                        _mc4.metric("Samples", f"{_cf.n_samples}")
+                        st.markdown(_cf.narrative)
+
+        # ── Tab 2: Threshold Effects ────────────────────────────────────
+        with disc_tab2:
+            if not _disc_result.thresholds:
+                st.warning("No significant threshold effects found.")
+            else:
+                for _ti, _tf in enumerate(_disc_result.thresholds):
+                    _new_badge_t = "  `NEW`" if _tf.is_new else ""
+                    _trigger_label = _format_metric(_tf.trigger_metric)
+                    _outcome_label = _format_metric(_tf.outcome_metric)
+
+                    with st.expander(
+                        f"When **{_trigger_label}** >= {_tf.threshold:.0f} → "
+                        f"**{_outcome_label}** delta={_tf.delta:+.1f}{_new_badge_t}",
+                        expanded=_ti < 3,
+                    ):
+                        _tc1, _tc2, _tc3, _tc4 = st.columns(4)
+                        _tc1.metric(f"Above (n={_tf.n_above})", f"{_tf.mean_above:.1f}")
+                        _tc2.metric(f"Below (n={_tf.n_below})", f"{_tf.mean_below:.1f}")
+                        _tc3.metric("Delta", f"{_tf.delta:+.1f}")
+                        _tc4.metric("p-value", f"{_tf.p_value:.4f}")
+                        st.markdown(_tf.narrative)
+
+        # ── Tab 3: Correlation Heatmap ──────────────────────────────────
+        with disc_tab3:
+            # Build heatmap from lag-0 correlations
+            _lag0 = [c for c in _disc_result.correlations if c.lag == 0]
+            if not _lag0:
+                st.warning("No lag-0 correlations to display in heatmap.")
+            else:
+                # Collect unique metrics from lag-0 findings
+                _hm_metrics = sorted(set(
+                    m for c in _lag0 for m in (c.metric_a, c.metric_b)
+                ))
+                _n_hm = len(_hm_metrics)
+                _hm_matrix = _np.zeros((_n_hm, _n_hm))
+                _hm_matrix[:] = _np.nan
+
+                # Fill diagonal
+                for _i in range(_n_hm):
+                    _hm_matrix[_i][_i] = 1.0
+
+                # Fill from findings
+                _metric_idx = {m: i for i, m in enumerate(_hm_metrics)}
+                for _c in _lag0:
+                    _ia = _metric_idx.get(_c.metric_a)
+                    _ib = _metric_idx.get(_c.metric_b)
+                    if _ia is not None and _ib is not None:
+                        _hm_matrix[_ia][_ib] = _c.rho
+                        _hm_matrix[_ib][_ia] = _c.rho
+
+                _hm_labels = [_format_metric(m) for m in _hm_metrics]
+
+                _hm_fig = _pgo.Figure(data=_pgo.Heatmap(
+                    z=_hm_matrix,
+                    x=_hm_labels,
+                    y=_hm_labels,
+                    colorscale="RdBu_r",
+                    zmid=0,
+                    zmin=-1,
+                    zmax=1,
+                    text=_np.where(
+                        _np.isnan(_hm_matrix), "",
+                        _np.vectorize(lambda v: f"{v:.2f}")(_hm_matrix)
+                    ),
+                    texttemplate="%{text}",
+                    colorbar=dict(title="Spearman rho"),
+                ))
+                _hm_fig.update_layout(
+                    title="Significant Correlations (Lag 0)",
+                    height=max(400, 50 * _n_hm),
+                    xaxis=dict(tickangle=-45),
+                    margin=dict(l=150, b=150),
+                )
+                st.plotly_chart(_hm_fig, use_container_width=True)
+
+        # ── Save to S3 button ───────────────────────────────────────────
+        if st.button("Save to S3"):
+            try:
+                s3_uri = _disc_store.save(_disc_result)
+                st.success(f"Saved to {s3_uri}")
+            except Exception as e:
+                st.error(f"S3 save failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PAGE 8: FHIR EXPORT
 # ══════════════════════════════════════════════════════════════════════════
 elif page == "📤 Export":
     st.header("FHIR R4 Bundle Export")
