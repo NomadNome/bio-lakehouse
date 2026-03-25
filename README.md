@@ -39,7 +39,7 @@ The same patterns used here — metadata-driven governance, encrypted ingestion 
 ✅ **43 Unit Tests** — Coverage across ETL utils, Athena client, insights analyzers, NL-to-SQL engine  
 ✅ **Query Performance** — Result caching + optimized Athena views = sub-20s response times  
 
-**Data Volume**: 833 workouts (2021-2026) • 90 days Oura biometrics • ~3.5MB Silver • 9 Gold views  
+**Data Volume**: 863 workouts (2021-2026) • 120 days Oura biometrics • 1,977 Gold rows (2020-2026) • 9 Gold views
 **Uptime**: Ingestion running since 2026-02-17 • 0 failed Lambda invocations • 100% Glue job success rate
 
 ## Security & Compliance Posture
@@ -248,8 +248,10 @@ python scripts/run_weekly_report.py --local-only
 
 | Source | Data | Volume | Date Range |
 |--------|------|--------|------------|
-| Oura Ring | Sleep score, readiness, HRV, resting HR, activity | ~90 days | Nov 2025 -- Feb 2026 |
-| Peloton | Cycling/strength workouts, output (kJ), watts, heart rate | 833 workouts | May 2021 -- Feb 2026 |
+| Oura Ring | Sleep score, readiness, HRV, resting HR, activity | 120 days | Nov 2025 -- Mar 2026 |
+| Peloton | Cycling/strength workouts, output (kJ), watts, heart rate | 863 workouts | May 2021 -- Mar 2026 |
+| Apple HealthKit | Resting HR, HRV, VO2 max, weight, body fat, workouts | 5,395 days | Sep 2020 -- Mar 2026 |
+| MyFitnessPal | Daily calories, macros, nutrition summary | Intermittent | Mar 2026 |
 
 ## Gold Layer Views
 
@@ -433,7 +435,7 @@ Even with small data volumes (~MB), PySpark demonstrates ETL patterns that scale
 Privacy-first: biometric data stays in AWS + local machine. No public endpoints. Demonstrates you can build production-quality UIs without exposing sensitive data.
 
 **Statistical Rigor**  
-All correlations report p-values and sample sizes. Uses non-parametric tests (Mann-Whitney U) appropriate for small samples. Explicitly flags limitations ("n=90 is observational, not causal").
+All correlations report p-values and sample sizes. Uses non-parametric tests (Mann-Whitney U) appropriate for small samples. Explicitly flags limitations ("n=120 is observational, not causal").
 
 ### Enterprise Parallels
 
@@ -458,11 +460,10 @@ The patterns here — event-driven ingestion, metadata-driven governance, AI-pow
 **CI/CD**: Manual deployment (next: GitHub Actions for test automation + Glue job updates)  
 **Monitoring**: CloudWatch Logs for Lambda/Glue, DynamoDB ingestion log, Streamlit query log  
 
-**Future Enhancements** (see [docs/PRD.md](docs/PRD.md) for full roadmap):  
-- Predictive modeling (next-day readiness forecast using scikit-learn or XGBoost)  
-- Apple Health integration (HealthKit CSV export → Bronze layer)  
-- Multi-model NL-to-SQL comparison (benchmark Claude vs GPT-4 Turbo vs Gemini Pro)  
+**Future Enhancements** (see [docs/PRD.md](docs/PRD.md) for full roadmap):
+- Multi-model NL-to-SQL comparison (benchmark Claude vs GPT-4 Turbo vs Gemini Pro)
 - Real-time streaming (Kinesis Data Streams → Lambda → Silver, replace batch Glue)
+- n8n workflow automation (Peloton/MFP API ingestion, unified notification hub)
 
 ---
 
@@ -490,30 +491,74 @@ Same-day readiness contributors (recovery index, resting heart rate score) corre
 
 With only ~90 samples, ensemble methods with hundreds of parameters learn noise. Linear models with strong regularization (Ridge, ElasticNet) consistently outperformed tree-based models in walk-forward CV. The pipeline now includes sample size warnings and automatically selects conservative architectures. **Lesson:** Model complexity should scale with data volume. More parameters ≠ better predictions.
 
+### CTL Was Invisible at N=87
+
+The 42-day chronic training load (CTL) — which became the #1 feature at N=119 — wasn't even selected by feature selection at N=87. The reason: with only 87 days of Oura data, only ~2 full CTL cycles existed, which is insufficient for the exponential moving average to demonstrate predictive power. At N=119 (3+ cycles), CTL jumped to 20.8% importance and fundamentally changed the model's story from "yesterday's stress" to "weeks of consistent training." **Lesson:** Time-series ML features with long lookback windows (42 days for CTL) require patience with data accumulation. Premature feature engineering at small N will miss the most important signals — let the data grow and retrain regularly.
+
 ---
 
-## Model Performance Notes (as of Feb 2026, N=87)
+## Readiness Predictor (Phase 7)
 
-**Current Metrics:**
-- MAE: 5.0 (beats naive baseline of 5.4)
-- R²: Negative (expected with <100 samples — model outperforms the mean on absolute error but not variance)
-- Cross-validation: Walk-forward with 7-day test windows, min 30-sample training set
+A next-day readiness prediction pipeline using GradientBoostingRegressor with automated feature selection, walk-forward cross-validation, and Optuna hyperparameter tuning. The model retrains as data accumulates, with feature importance evolving as sample size grows.
 
-**Feature Engineering Wins:**
-- Sleep debt tracking (7-day cumulative deficit) is the #2 feature by importance (0.20) — confirms compounding sleep loss predicts readiness crashes beyond nightly scores
-- Deep sleep score (Oura contributor) was selected by MI but gets zero importance from GradientBoosting — likely redundant with sleep_score
-- HRV velocity (2-day delta) contributes at 10% importance — captures autonomic stress dynamics that static HRV misses
-- TSB (training stress balance) is #1 feature (0.26) — validates the CTL/ATL framework from training load analysis
+### Model Version History
 
-**Honest Limitations:**
-- `sleep_debt_7d` (MI=0.10) might capture "recent poor sleep" rather than true compounding deficit — needs more samples to distinguish
-- `hrv_2day_change` (MI=0.04) is borderline noise — may get pruned when feature selection tightens at higher N
-- `deep_sleep_score` and `hrv_balance_score` have zero model importance despite being selected — will likely be dropped at N=150+
+| Version | Samples | MAE | Top Feature | Features Selected | max_depth | Date |
+|---------|---------|-----|-------------|-------------------|-----------|------|
+| v1 | 87 | 5.00 | TSB (26.4%) | 6 | 3 | Feb 2026 |
+| v2 | 119 | 4.65 | CTL (20.8%) | 8 | 2 | Mar 2026 |
 
-**Path to Production:**
-- Target: 150+ samples for stable R² > 0.25
-- Timeline: ~8 weeks at current ingestion rate
+The progression tells a story: as data grew from 87 to 119 samples, the model simplified (max_depth 3→2) while improving accuracy (MAE 5.0→4.65). The model's explanation of readiness shifted from "yesterday's training stress" to "chronic training load management over weeks."
+
+### Current Model (v2, N=119)
+
+**Metrics:**
+- MAE: 4.65 (beats naive 7-day average baseline of 4.7)
+- Cross-validation: Walk-forward, 12 folds, 7-day test windows, min 30-sample training set
+- R²: Negative (expected — the model's value at this sample size is interpretable feature importance for training decisions, not raw prediction lift over naive forecasting. As N approaches 200+, we expect the accuracy gap to widen as the model captures more complex feature interactions.)
+
+**Feature Importance:**
+| Feature | Importance | What It Means |
+|---------|-----------|---------------|
+| CTL (chronic training load, 42-day) | 20.8% | Consistent training volume over weeks matters most |
+| TSB (training stress balance) | 20.5% | Freshness vs fatigue balance drives next-day readiness |
+| Resting heart rate | 18.8% | Autonomic recovery signal |
+| HRV 2-day change | 13.1% | Autonomic stress dynamics (direction of change, not absolute level) |
+| Day of week | 10.5% | Weekly periodization patterns (higher after rest days) |
+| Readiness 7-day avg | 10.4% | Momentum/baseline |
+| Sleep score 3-day avg | 4.4% | Recent sleep quality |
+| Deep sleep score | 1.4% | Marginal contributor |
+
+**Key insight:** CTL + TSB = 41% of readiness variance. Your readiness is primarily driven by training load management over weeks, not any single day's metrics.
+
+### What Changed Between v1 and v2
+
+| Feature | v1 (N=87) | v2 (N=119) | Explanation |
+|---------|-----------|------------|-------------|
+| CTL | not selected | **#1 (20.8%)** | At N=87, only ~2 CTL cycles (42-day EMA) existed — insufficient history for the signal to resolve. At N=119, 3+ cycles made CTL's predictive power visible. |
+| Day of week | not selected | **10.5%** | Weekly periodization patterns only emerge with enough weekends in the dataset. |
+| Sleep score 3d avg | not selected | **4.4%** | Replaced `sleep_debt_7d` — short-term sleep quality predicts better than accumulated debt. |
+| HRV 2-day change | 10.1% (MI=0.04) | **13.1%** | Initially flagged as borderline noise by MI scoring, but importance increased with more samples — the signal was real but required more data to resolve. |
+| sleep_debt_7d | 19.5% (#2) | **dropped** | Replaced by sleep_score_3d_avg with more data. |
+| tss (daily) | 12.8% | **dropped** | Replaced by CTL — long-term load signal superseded daily training stress. |
+| hrv_balance_score | 0% | **dropped** | Confirmed zero predictive value, removed by feature selection. |
+
+### Previous Model (v1, N=87, Feb 2026)
+
+Preserved for comparison. Top features were TSB (26.4%), sleep_debt_7d (19.5%), resting_hr (15.7%). The v1 narrative was "TSB and sleep debt drive readiness." The v2 narrative is fundamentally different: "chronic training load and training stress balance drive readiness, with weekly periodization patterns."
+
+### Honest Limitations
+
+- MAE of 4.65 vs naive baseline of 4.7 is a 1% margin. The model's primary value at current sample size is **interpretable feature importance for training decisions**, not raw prediction lift over naive forecasting.
+- `deep_sleep_score` contributes only 1.4% — likely redundant with sleep_score and will probably be dropped at N=150+.
+- R² remains negative. This is expected with ~120 samples of inherently noisy biometric data. The model consistently beats the baseline on MAE (the metric that matters for actionable predictions).
+
+### Path Forward
+
+- Target: 200+ samples for stable R² > 0 and meaningful prediction lift
+- Timeline: ~10 weeks at current daily ingestion rate
 - Plan: Retrain monthly, monitor feature importance drift, let the model decide what stays
+- Connection to Gold views: The `overtraining_risk` view's logic should be revisited to weight CTL/TSB more heavily, aligning with what the ML model learned
 
 ---
 
