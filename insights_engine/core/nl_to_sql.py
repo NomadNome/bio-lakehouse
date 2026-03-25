@@ -13,7 +13,6 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import anthropic
 import pandas as pd
 
 from insights_engine.config import CLAUDE_CONFIG
@@ -54,14 +53,21 @@ class NLToSQLEngine:
     ):
         self.athena = athena
         self.model = model or CLAUDE_CONFIG["nl_to_sql_model"]
-        api_key = os.environ.get(CLAUDE_CONFIG["api_key_env"])
-        if not api_key:
+        self._api_key = os.environ.get(CLAUDE_CONFIG["api_key_env"])
+        if not self._api_key:
             raise ValueError(
                 f"Set {CLAUDE_CONFIG['api_key_env']} environment variable"
             )
-        self.client = anthropic.Anthropic(api_key=api_key)
+        self._client = None
         self._system_prompt = None
         self._examples = None
+
+    @property
+    def client(self):
+        if self._client is None:
+            import anthropic
+            self._client = anthropic.Anthropic(api_key=self._api_key)
+        return self._client
 
     def _load_system_prompt(self) -> str:
         """Load and hydrate the system prompt with live schema DDL."""

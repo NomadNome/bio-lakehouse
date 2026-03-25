@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-import anthropic
 import pandas as pd
 from jinja2 import Environment, FileSystemLoader
 
@@ -94,10 +93,10 @@ class WeeklyReportGenerator:
     def __init__(self, athena: AthenaClient, model: str = None):
         self.athena = athena
         self.model = model or CLAUDE_CONFIG["insight_narrator_model"]
-        api_key = os.environ.get(CLAUDE_CONFIG["api_key_env"])
-        if not api_key:
+        self._api_key = os.environ.get(CLAUDE_CONFIG["api_key_env"])
+        if not self._api_key:
             raise ValueError(f"Set {CLAUDE_CONFIG['api_key_env']} environment variable")
-        self.client = anthropic.Anthropic(api_key=api_key)
+        self._client = None
 
         self.analyzers = [
             SleepReadinessAnalyzer(athena),
@@ -111,6 +110,13 @@ class WeeklyReportGenerator:
             TimingCorrelationAnalyzer(athena),
             NutritionAnalyzer(athena),
         ]
+
+    @property
+    def client(self):
+        if self._client is None:
+            import anthropic
+            self._client = anthropic.Anthropic(api_key=self._api_key)
+        return self._client
 
     def generate(self, week_ending: date = None) -> ReportResult:
         """Run all analyzers, generate narrative, render HTML."""

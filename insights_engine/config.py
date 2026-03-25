@@ -21,8 +21,8 @@ AWS_CONFIG = {
 # Claude API Configuration
 CLAUDE_CONFIG = {
     "api_key_env": "ANTHROPIC_API_KEY",
-    "nl_to_sql_model": "claude-sonnet-4-20250514",
-    "insight_narrator_model": "claude-sonnet-4-20250514",
+    "nl_to_sql_model": "claude-sonnet-4-6",
+    "insight_narrator_model": "claude-sonnet-4-6",
     "max_tokens": 2048,
     "temperature": 0.0,  # Deterministic SQL generation
 }
