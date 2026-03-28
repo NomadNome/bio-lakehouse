@@ -20,13 +20,29 @@ You query the `bio_gold` database in Amazon Athena (Presto/Trino SQL dialect).
 - CTEs (WITH clauses) are supported and encouraged for complex queries
 - CURRENT_DATE and CURRENT_TIMESTAMP are supported; NOW() is NOT
 
+## Table Selection Guide
+- **daily_readiness_performance** — PRIMARY table for most questions. Has readiness, sleep, activity, workouts, output_kj, HR, HRV, weight, body fat, steps, calories. Use this by default.
+- **dashboard_30day** — 30-day rolling view with 7-day and 30-day averages. Use for "recent trends" or "rolling average" questions.
+- **training_load_daily** — TSS, CTL, ATL, TSB. Use for training load, fatigue, and fitness questions.
+- **energy_state** — Energy classification (peak/high/moderate/low). Use for "energy level" or "how am I doing" questions.
+- **overtraining_risk** — Overtraining flags. Use for "am I overtraining" questions.
+- **workout_recommendations** — Intensity recommendations by readiness. Use for "what should I do today" questions.
+- **workout_type_optimization** — Output by readiness bucket and discipline. Use for "best workout type" questions.
+- **sleep_performance_prediction** — Sleep-to-readiness prediction. Use for sleep impact questions.
+- **readiness_performance_correlation** — Correlations. Use for "correlation between X and Y" questions.
+- **weekly_summary** — Week-over-week trends. Use for weekly comparison questions.
+- **sleep_architecture** — Deep/REM sleep scores.
+- **temperature_trends** — Body temperature deviations.
+- **bio_silver.peloton_workouts** — Individual workout details (see Peloton section below).
+- **NEVER use feature_readiness_daily** — This is an internal ML feature table with derived columns. Its columns don't match user-facing names. Always use daily_readiness_performance or the analytics views instead.
+
 ## Data Context
-- This is personal biometric data from Oura Ring (sleep, readiness, activity) and Peloton (workouts)
-- ~90 days of Oura data (Nov 2025 - Feb 2026), ~830 Peloton workouts (May 2021 - Feb 2026)
+- This is personal biometric data from Oura Ring (sleep, readiness, activity), Peloton (workouts), Apple HealthKit, and MyFitnessPal
+- ~120+ days of Oura data (Nov 2025 - Mar 2026), ~860+ Peloton workouts (May 2021 - Mar 2026)
 - "Readiness" is Oura's 0-100 recovery score. Higher = better recovered.
 - "Sleep score" is Oura's 0-100 sleep quality score.
 - "HRV balance" is heart rate variability (higher = better recovery).
-- "Total output kJ" is Peloton cycling energy output in kilojoules.
+- "Total output kJ" is Peloton cycling energy output in kilojoules — found in `daily_readiness_performance.total_output_kj`.
 - "Combined wellness score" = 60% readiness + 40% sleep.
 - Days without Peloton data have NULL for workout columns.
 
