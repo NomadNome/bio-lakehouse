@@ -37,6 +37,25 @@ def upload_to_s3(
     return s3_uri
 
 
+def save_pdf(html: str, output_path: str | Path = None) -> Path:
+    """Convert HTML report to PDF. Returns the file path."""
+    from weasyprint import HTML
+
+    if output_path is None:
+        output_path = Path.home() / "Downloads" / "weekly-report.pdf"
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    HTML(string=html).write_pdf(str(output_path))
+    print(f"PDF report saved to {output_path}")
+    return output_path
+
+
+def generate_pdf_bytes(html: str) -> bytes:
+    """Convert HTML report to PDF bytes (for Streamlit download)."""
+    from weasyprint import HTML
+    return HTML(string=html).write_pdf()
+
+
 def save_local(html: str, output_dir: str | Path = None) -> Path:
     """Save HTML report to a local file. Returns the file path."""
     if output_dir is None:

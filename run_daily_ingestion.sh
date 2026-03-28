@@ -12,6 +12,7 @@ AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account 
 BUCKET="bio-lakehouse-bronze-${AWS_ACCOUNT_ID}"
 REGION="us-east-1"
 PROJECT_DIR="$HOME/Desktop/Bio Lakehouse"
+VENV="$HOME/.local/share/bio-lakehouse-venv"
 BATCH_DATE=$(date +%Y-%m-%d)
 TODAY=$(date +%Y-%m-%d)
 YESTERDAY=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d "yesterday" +%Y-%m-%d)
@@ -87,7 +88,7 @@ unzip -q -o "$HK_ZIP" "apple_health_export/export.xml" -d /tmp/healthkit_daily_p
 
 echo "  Parsing since $SINCE_DATE..."
 cd "$PROJECT_DIR"
-.venv/bin/python scripts/parse_healthkit_export.py \
+"$VENV/bin/python" scripts/parse_healthkit_export.py \
     --input /tmp/healthkit_daily_parse/apple_health_export/export.xml \
     --since "$SINCE_DATE" \
     --output-dir /tmp/healthkit_daily_csvs
@@ -101,7 +102,7 @@ echo ""
 echo "--- Step 3: Split Peloton ---"
 
 rm -rf /tmp/peloton_daily_split
-.venv/bin/python3 -c "
+"$VENV/bin/python"3 -c "
 import csv, os, re
 from datetime import datetime, timedelta
 
@@ -397,7 +398,8 @@ if [ "$(date +%u)" = "7" ]; then
     echo ""
     echo "--- Step 12: Weekly Correlation Discovery ---"
     cd "$PROJECT_DIR"
-    PYTHONPATH=$(pwd) .venv/bin/python scripts/run_correlation_discovery.py 2>&1 | tail -20
+    cp -f "$PROJECT_DIR/.env" "$HOME/.local/share/bio-lakehouse-src/.env" 2>/dev/null || true
+    PYTHONPATH="$HOME/.local/share/bio-lakehouse-src" BIO_PROJECT_ROOT="$HOME/.local/share/bio-lakehouse-src" "$VENV/bin/python" scripts/run_correlation_discovery.py 2>&1 | tail -20
     echo "  Weekly discovery complete."
 else
     echo ""

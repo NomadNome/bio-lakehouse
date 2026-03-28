@@ -22,3 +22,6 @@ xgboost>=2.0.0
 lightgbm>=4.0.0
 optuna>=3.5.0
 mlflow>=2.10.0
+
+# PDF report generation
+weasyprint>=62.0

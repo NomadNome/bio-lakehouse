@@ -8,7 +8,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Load .env from project root (Bio Lakehouse/)
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+# BIO_PROJECT_ROOT supports the source-code symlink (insights_engine/ may live outside the project tree)
+_project_root = Path(os.environ.get("BIO_PROJECT_ROOT", Path(__file__).resolve().parent.parent))
+load_dotenv(_project_root / ".env")
 
 # AWS Configuration
 AWS_CONFIG = {

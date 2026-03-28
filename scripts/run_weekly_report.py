@@ -25,7 +25,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from insights_engine.core.athena_client import AthenaClient
 from insights_engine.reports.weekly_report import WeeklyReportGenerator
-from insights_engine.reports.delivery import upload_to_s3, save_local
+from insights_engine.reports.delivery import upload_to_s3, save_local, save_pdf
 
 
 def main():
@@ -40,6 +40,11 @@ def main():
         "--local-only",
         action="store_true",
         help="Save report locally only, don't upload to S3.",
+    )
+    parser.add_argument(
+        "--pdf",
+        action="store_true",
+        help="Also generate a PDF and save to ~/Downloads/weekly-report.pdf",
     )
     parser.add_argument(
         "--output-dir",
@@ -64,6 +69,11 @@ def main():
     # Always save locally
     local_path = save_local(result.html, args.output_dir)
     print(f"Local: {local_path}")
+
+    # Generate PDF if requested
+    if args.pdf:
+        pdf_path = save_pdf(result.html)
+        print(f"PDF: {pdf_path}")
 
     # Upload to S3 unless --local-only
     if not args.local_only:

@@ -216,9 +216,12 @@ with st.sidebar:
 
     st.divider()
     if st.button("🔄 Refresh Data"):
-        # Clear all Streamlit caches
+        # Clear all Streamlit caches + What-If simulator session state
         st.cache_data.clear()
         st.cache_resource.clear()
+        for _k in ["whatif_simulator", "whatif_loaded_at", "whatif_latest",
+                    "multiday_result"]:
+            st.session_state.pop(_k, None)
         st.rerun()
 
     st.toggle("Dark Mode", value=st.session_state.dark_mode, key="dark_mode_toggle",
@@ -912,13 +915,21 @@ elif page == "🔮 What-If":
         scenario_comparison_chart,
     )
 
-    # Cached simulator — loads historical models once per session
-    if "whatif_simulator" not in st.session_state:
+    # Simulator — refresh every 10 minutes so new workout/sleep data is reflected
+    import time as _time
+    _sim_stale = (
+        "whatif_simulator" not in st.session_state
+        or _time.time() - st.session_state.get("whatif_loaded_at", 0) > 600
+    )
+    if _sim_stale:
         try:
             with st.spinner("Loading your historical patterns..."):
                 sim = WhatIfSimulator(get_athena())
                 sim.load_historical_models()
                 st.session_state.whatif_simulator = sim
+                st.session_state.whatif_loaded_at = _time.time()
+                # Clear stale multi-day projection so it uses fresh data
+                st.session_state.pop("multiday_result", None)
         except Exception as e:
             st.error(f"Failed to load historical data: {e}")
             import traceback

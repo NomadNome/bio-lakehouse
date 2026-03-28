@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/run_daily_ingestion.sh</string>
+        <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/scripts/daily_ingestion_wrapper.sh</string>
     </array>
 
     <key>StartCalendarInterval</key>
