@@ -234,6 +234,87 @@ with st.sidebar:
 # PAGE 1: ASK (NL-to-SQL Chat)
 # ══════════════════════════════════════════════════════════════════════════
 if page == "💬 Ask":
+    import plotly.graph_objects as go
+    from insights_engine.viz import theme as _theme
+
+    def _auto_chart(df: pd.DataFrame) -> "go.Figure | None":
+        """Detect result shape and return an appropriate Plotly chart, or None."""
+        try:
+            if df is None or len(df) <= 1 or len(df.columns) < 2 or len(df) > 200:
+                return None
+
+            # Classify columns
+            date_cols = [
+                c for c in df.columns
+                if "date" in c.lower()
+                or pd.api.types.is_datetime64_any_dtype(df[c])
+            ]
+            numeric_cols = [
+                c for c in df.columns
+                if pd.api.types.is_numeric_dtype(df[c])
+                and not any(tag in c.lower() for tag in ("id", "_id", "key"))
+            ]
+            # Drop all-null numeric columns
+            numeric_cols = [c for c in numeric_cols if df[c].notna().any()]
+
+            category_cols = [
+                c for c in df.columns
+                if pd.api.types.is_string_dtype(df[c])
+                and df[c].nunique() < 15
+                and c not in date_cols
+            ]
+
+            fig = None
+
+            # --- Line chart: date + numeric ---
+            if date_cols and numeric_cols:
+                x_col = date_cols[0]
+                sorted_df = df.sort_values(x_col)
+                fig = go.Figure()
+                for i, nc in enumerate(numeric_cols):
+                    fig.add_trace(go.Scatter(
+                        x=sorted_df[x_col],
+                        y=sorted_df[nc],
+                        mode="lines+markers",
+                        name=nc.replace("_", " ").title(),
+                        line=dict(
+                            color=_theme.SERIES_COLORS[i % len(_theme.SERIES_COLORS)],
+                            width=2,
+                        ),
+                        marker=dict(size=5),
+                    ))
+                _theme.style_figure(fig, n=len(df), title="Query Results")
+
+            # --- Bar chart: category + 1 numeric ---
+            elif category_cols and len(numeric_cols) == 1:
+                x_col = category_cols[0]
+                y_col = numeric_cols[0]
+                fig = go.Figure(go.Bar(
+                    x=df[x_col],
+                    y=df[y_col],
+                    marker_color=_theme.PRIMARY,
+                    name=y_col.replace("_", " ").title(),
+                ))
+                _theme.style_figure(fig, n=len(df), title="Query Results")
+
+            # --- Grouped bar: 2+ numeric, no dates ---
+            elif len(numeric_cols) >= 2 and not date_cols:
+                x_col = df.columns[0]
+                fig = go.Figure()
+                for i, nc in enumerate(numeric_cols):
+                    fig.add_trace(go.Bar(
+                        x=df[x_col].astype(str),
+                        y=df[nc],
+                        name=nc.replace("_", " ").title(),
+                        marker_color=_theme.SERIES_COLORS[i % len(_theme.SERIES_COLORS)],
+                    ))
+                fig.update_layout(barmode="group")
+                _theme.style_figure(fig, n=len(df), title="Query Results")
+
+            return fig
+        except Exception:
+            return None
+
     st.header("Ask Your Data")
     st.caption("Type a health or fitness question in plain English.")
 
@@ -253,6 +334,8 @@ if page == "💬 Ask":
             if msg.get("data") is not None and not msg["data"].empty:
                 with st.expander(f"Show Data ({len(msg['data'])} rows)"):
                     st.dataframe(msg["data"], width="stretch")
+            if msg.get("chart") is not None:
+                st.plotly_chart(msg["chart"], use_container_width=True)
 
     # Chat input
     if question := st.chat_input("e.g., What was my average readiness last week?"):
@@ -288,6 +371,11 @@ if page == "💬 Ask":
                                 st.dataframe(result.data, width="stretch")
                                 csv_download(result.data, "query_results.csv", "Download Results CSV")
 
+                        # Auto-chart
+                        fig = _auto_chart(result.data)
+                        if fig:
+                            st.plotly_chart(fig, use_container_width=True)
+
                         # Metadata
                         cols = st.columns(3)
                         cols[0].caption(f"⏱️ {result.execution_time_ms}ms")
@@ -300,6 +388,7 @@ if page == "💬 Ask":
                             "content": result.answer,
                             "sql": result.sql,
                             "data": result.data,
+                            "chart": fig,
                         })
                         st.session_state.nl_history.append({
                             "question": question,

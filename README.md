@@ -500,6 +500,26 @@ aws dynamodb scan \
 
 ---
 
+## Monthly AWS Cost
+
+Running a personal data lakehouse on AWS costs less than a streaming subscription:
+
+| Service | Usage | Monthly Cost |
+|---------|-------|-------------|
+| S3 (Bronze/Silver/Gold) | ~2 GB stored, ~1K requests/day | $0.05 |
+| AWS Glue | 4 normalizers × 3 DPU × ~2 min/day | ~$2.50 |
+| Glue Crawlers | 2 crawlers × ~1 min/day | ~$0.30 |
+| Athena | ~50 queries/day × ~10 MB scanned | ~$0.25 |
+| Lambda | 5 functions × ~30 invocations/day | ~$0.00 (free tier) |
+| DynamoDB | ~30 writes/day, on-demand | ~$0.00 (free tier) |
+| EventBridge | ~10 rules | ~$0.00 (free tier) |
+| SNS | ~2 emails/day | ~$0.00 (free tier) |
+| **Total** | | **~$3.10/month** |
+
+Key cost decisions: Athena pay-per-query over Redshift clusters ($0.25/month vs $180+/month). Glue over EMR (no idle cluster costs). Result caching in AthenaClient eliminates redundant scans. Parquet columnar format in Gold layer minimizes bytes scanned per query.
+
+---
+
 ## Design Decisions & Trade-offs
 
 **Why Medallion Architecture?**
@@ -593,6 +613,20 @@ The 42-day chronic training load (CTL) -- which became the #1 feature at N=119 -
 ### Desktop I/O Killed Startup
 
 macOS Spotlight indexes everything under `~/Desktop/`, adding massive I/O overhead to Python imports. The Streamlit app took 600+ seconds to start because the venv and source code lived in the project directory. Moving them physically to `~/.local/share/` and pointing `PYTHONPATH`/`BIO_PROJECT_ROOT` there brought startup down to <1 second. **Lesson:** Know your operating environment. Framework-level performance issues can dwarf any code optimization.
+
+---
+
+## What I'd Do Differently
+
+Building and running this system daily for 6+ weeks revealed architectural choices I'd revisit:
+
+- **Step Functions over Lambda orchestrator** -- The pipeline orchestrator Lambda chains jobs by polling Glue state in a loop. AWS Step Functions would provide visual workflow debugging, automatic retries with exponential backoff, and parallel branch support out of the box. The Lambda approach works but is harder to observe and extend.
+
+- **dbt tests from day one** -- I added dbt late (Phase 6) and relied on manual Athena verification for the Gold layer. Starting with `dbt test` (unique, not_null, accepted_values) on the Silver layer would have caught the Bronze CSV column-order bug weeks earlier. Schema tests at every layer boundary should be non-negotiable.
+
+- **Incremental models over full refresh** -- The Gold layer runs a full dbt rebuild daily (~45s on Glue). With 600+ rows this is fine, but the pattern won't scale. Incremental models with `merge` strategy on the date column would make this future-proof and reduce Glue DPU-minutes by ~80%.
+
+- **Structured logging over print statements** -- The daily ingestion script uses `echo` for status output. Python's `logging` module with JSON formatting would make CloudWatch queries trivial and enable automated alerting on specific error patterns without grep.
 
 ---
 
