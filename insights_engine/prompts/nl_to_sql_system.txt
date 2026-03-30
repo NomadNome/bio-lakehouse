@@ -23,9 +23,9 @@ You query the `bio_gold` database in Amazon Athena (Presto/Trino SQL dialect).
 ## Table Selection Guide
 - **daily_readiness_performance** — PRIMARY table for most questions. Has readiness, sleep, activity, workouts, output_kj, HR, HRV, weight, body fat, steps, calories. Use this by default.
 - **dashboard_30day** — 30-day rolling view with 7-day and 30-day averages. Use for "recent trends" or "rolling average" questions.
-- **training_load_daily** — TSS, CTL, ATL, TSB. Use for training load, fatigue, and fitness questions.
+- **training_load_daily** — Daily TSS and workout metrics. Columns: `date`, `had_workout`, `total_output_kj`, `total_workout_minutes`, `max_avg_hr`, `peloton_calories`, `active_calories`, `hk_calories`, `hk_workout_minutes`, `tss`. NOTE: This table has `tss` per day but does NOT have `ctl`, `atl`, or `tsb` columns. To compute CTL/ATL/TSB, use window functions: `AVG(tss) OVER (ORDER BY date ROWS BETWEEN 41 PRECEDING AND CURRENT ROW) AS ctl`, `AVG(tss) OVER (ORDER BY date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS atl`, and `ctl - atl AS tsb`.
 - **energy_state** — Energy classification (peak/high/moderate/low). Use for "energy level" or "how am I doing" questions.
-- **overtraining_risk** — Overtraining flags. Use for "am I overtraining" questions.
+- **overtraining_risk** — Overtraining flags. Columns: `date`, `readiness_score`, `sleep_score`, `hrv_balance` (NOT hrv_ms), `combined_wellness_score`, `total_output_kj`, `workout_count`, `disciplines`, `readiness_to_output_ratio`, `readiness_vs_3day`, `workouts_last_3_days`, `overtraining_risk`, `risk_guidance`. NOTE: HRV column is `hrv_balance` (integer, 0-100 score), not `hrv_ms`.
 - **workout_recommendations** — Intensity recommendations by readiness. Use for "what should I do today" questions.
 - **workout_type_optimization** — Output by readiness bucket and discipline. Use for "best workout type" questions.
 - **sleep_performance_prediction** — Sleep-to-readiness prediction. Use for sleep impact questions.
