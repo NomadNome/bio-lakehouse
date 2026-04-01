@@ -363,9 +363,12 @@ echo "--- Step 10: Restart Streamlit ---"
 
 cd "$PROJECT_DIR"
 # Kill existing Streamlit and restart in background (non-blocking)
+# Use nohup + disown so Streamlit survives when the pipeline script exits
+# (LaunchD kills child processes of completed jobs otherwise)
 /usr/sbin/lsof -ti :8501 | xargs kill -9 2>/dev/null || true
 sleep 1
-bash run_streamlit.sh &
+nohup bash run_streamlit.sh > /dev/null 2>&1 &
+disown
 echo "  Streamlit started (PID $!)"
 
 # -----------------------------------------------
