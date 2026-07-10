@@ -6,6 +6,7 @@ Handles polling, result parsing, schema introspection, and basic caching.
 """
 
 import hashlib
+import re
 import time
 from dataclasses import dataclass
 
@@ -151,15 +152,50 @@ class AthenaClient:
     def get_schema(self, database: str = None) -> dict[str, list[Column]]:
         """Return {table_or_view_name: [Column(name, type, comment)]} for prompt context.
 
-        Results are cached for the lifetime of the client instance.
+        Reads the Glue Data Catalog directly (one API call, no Athena queries,
+        no S3 result files). Falls back to per-table Athena LIMIT-0 queries if
+        Glue is unavailable. Results are cached for the client's lifetime.
         """
         if self._schema_cache is not None and database is None:
             return self._schema_cache
 
         db = database or self.database
+        try:
+            schema = self._get_schema_via_glue(db)
+        except Exception as e:
+            print(f"Warning: Glue catalog lookup failed ({e}); falling back to Athena")
+            schema = self._get_schema_via_athena(db)
+
+        if database is None:
+            self._schema_cache = schema
+        return schema
+
+    def _get_schema_via_glue(self, db: str) -> dict[str, list[Column]]:
+        """Fetch all table/view schemas from the Glue Data Catalog."""
+        glue = boto3.client("glue", region_name=AWS_CONFIG["aws_region"])
+        schema: dict[str, list[Column]] = {}
+        paginator = glue.get_paginator("get_tables")
+        for page in paginator.paginate(DatabaseName=db):
+            for table in page["TableList"]:
+                name = table["Name"]
+                # Skip Athena CTAS/temp artifacts (name ends in a 32-hex-char hash)
+                if re.search(r"_[0-9a-f]{32}$", name):
+                    continue
+                cols = table.get("StorageDescriptor", {}).get("Columns", [])
+                schema[name] = [
+                    Column(
+                        name=c["Name"],
+                        type=c.get("Type", ""),
+                        comment=c.get("Comment", ""),
+                    )
+                    for c in cols
+                ]
+        return schema
+
+    def _get_schema_via_athena(self, db: str) -> dict[str, list[Column]]:
+        """Legacy fallback: one LIMIT-0 Athena query per table (slow)."""
         schema: dict[str, list[Column]] = {}
 
-        # List tables and views
         tables_result = self.execute_query(f"SHOW TABLES IN {db}")
         if tables_result.empty:
             return schema
@@ -178,8 +214,6 @@ class AthenaClient:
             except Exception as e:
                 print(f"Warning: Could not describe {table_name}: {e}")
 
-        if database is None:
-            self._schema_cache = schema
         return schema
 
     def _get_column_metadata(self, db: str, table_name: str) -> list[Column]:
