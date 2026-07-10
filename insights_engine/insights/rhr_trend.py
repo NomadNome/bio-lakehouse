@@ -160,6 +160,7 @@ class RHRTrendAnalyzer(InsightAnalyzer):
 
         theme.style_figure(
             fig,
+            label_ends=True,
             n=s["n"],
             title="Resting Heart Rate (bpm)",
             height=400,

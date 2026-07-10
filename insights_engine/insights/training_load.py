@@ -222,7 +222,7 @@ class TrainingLoadAnalyzer(InsightAnalyzer):
                     row=2, col=1,
                 )
 
-        theme.style_figure(fig, n=s["n"], height=600)
+        theme.style_figure(fig, n=s["n"], label_ends=True, height=600)
         # Fit y-axes to visible data with padding
         ctl_atl_max = max(plot_df["ctl"].max(), plot_df["atl"].max(), 10)
         fig.update_yaxes(title_text="Training Load", range=[0, ctl_atl_max * 1.15], row=1, col=1)

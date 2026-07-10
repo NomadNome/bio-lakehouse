@@ -74,12 +74,60 @@ def bio_layout(**overrides) -> dict:
     return layout
 
 
-def style_figure(fig: go.Figure, n: int = None, **layout_overrides) -> go.Figure:
+def label_line_ends(fig: go.Figure) -> go.Figure:
+    """Direct-label each named line trace at its last point.
+
+    Complements the legend (identity is no longer color-alone) and removes
+    the legend round-trip while reading a chart. Skips low-opacity context
+    layers and legend-hidden traces. Widens the right margin to fit labels.
+    """
+    labeled = 0
+    for trace in fig.data:
+        if trace.type != "scatter" or not trace.name:
+            continue
+        if not trace.mode or "lines" not in trace.mode:
+            continue
+        if trace.showlegend is False:
+            continue
+        if trace.opacity is not None and trace.opacity < 0.5:
+            continue  # receded context layer — labeling it would over-promote it
+        xs, ys = trace.x, trace.y
+        if xs is None or ys is None or len(xs) == 0:
+            continue
+        # last point with a real y value
+        last = next(
+            (i for i in range(len(ys) - 1, -1, -1) if ys[i] is not None), None
+        )
+        if last is None:
+            continue
+        color = None
+        if trace.line is not None:
+            color = trace.line.color
+        fig.add_annotation(
+            x=xs[last], y=ys[last],
+            text=trace.name,
+            xref=trace.xaxis or "x", yref=trace.yaxis or "y",
+            xanchor="left", showarrow=False,
+            xshift=6,
+            font=dict(size=11, color=color or palette()["text_muted"]),
+        )
+        labeled += 1
+    if labeled:
+        fig.update_layout(margin=dict(r=95))
+    return fig
+
+
+def style_figure(
+    fig: go.Figure, n: int = None, label_ends: bool = False, **layout_overrides
+) -> go.Figure:
     """Apply Bio theme to an existing Plotly figure.
 
     If *n* is provided, adds a data-source attribution annotation.
+    If *label_ends* is True, direct-labels each line series at its last point.
     """
     fig.update_layout(**bio_layout(**layout_overrides))
+    if label_ends:
+        label_line_ends(fig)
     # Data source attribution (PRD requirement)
     attribution = "Data: Oura Ring + Peloton + Apple Health"
     if n is not None:

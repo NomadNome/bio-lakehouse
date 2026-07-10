@@ -5,8 +5,15 @@ LOG_DIR="$HOME/.local/share/bio-lakehouse-logs"
 PROJECT_DIR="$HOME/Projects/bio-lakehouse"
 TODAY=$(date +%Y-%m-%d)
 
+export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+SNS_TOPIC="arn:aws:sns:us-east-1:069899605581:bio-lakehouse-health-alerts"
+
 notify() {
+    # Local notification (visible if at the Mac) + SNS email (visible anywhere)
     osascript -e "display notification \"$1\" with title \"Bio Lakehouse\" subtitle \"$2\" sound name \"Basso\"" 2>/dev/null || true
+    aws sns publish --topic-arn "$SNS_TOPIC" --region us-east-1 \
+        --subject "Bio Lakehouse: $2" \
+        --message "$1" >/dev/null 2>&1 || true
 }
 
 # 1. Daily pipeline ran today?

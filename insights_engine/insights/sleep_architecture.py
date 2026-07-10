@@ -136,6 +136,7 @@ class SleepArchitectureAnalyzer(InsightAnalyzer):
 
         theme.style_figure(
             fig,
+            label_ends=True,
             n=s["n"],
             title="Deep & REM Sleep Quality (7-Day Avg)",
             height=400,

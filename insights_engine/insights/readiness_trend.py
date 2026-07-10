@@ -137,6 +137,7 @@ class ReadinessTrendAnalyzer(InsightAnalyzer):
         s = result.statistics
         theme.style_figure(
             fig,
+            label_ends=True,
             n=s["n"],
             title=f"Readiness Trend ({s['trend_icon']} {s['trend']})",
             xaxis_title="Date",

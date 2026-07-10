@@ -230,6 +230,7 @@ class TimingCorrelationAnalyzer(InsightAnalyzer):
 
         theme.style_figure(
             fig,
+            label_ends=True,
             n=result.statistics["total_n"],
             title="Workout Intensity → Next-Day Recovery",
         )

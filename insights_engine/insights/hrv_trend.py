@@ -146,6 +146,7 @@ class HRVTrendAnalyzer(InsightAnalyzer):
 
         theme.style_figure(
             fig,
+            label_ends=True,
             n=s["n"],
             title="Heart Rate Variability (ms)",
             height=400,
