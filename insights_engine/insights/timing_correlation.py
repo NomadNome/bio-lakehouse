@@ -176,7 +176,7 @@ class TimingCorrelationAnalyzer(InsightAnalyzer):
                 x=recent["total_output_kj"], y=recent["next_day_readiness"],
                 mode="markers",
                 marker=dict(color=theme.ACCENT, size=9, opacity=0.9,
-                            line=dict(width=1, color="white")),
+                            line=dict(width=2, color=theme.BACKGROUND)),
                 name="Last 14 days",
                 hovertemplate="%{customdata}<br>Output: %{x:.0f} kJ<br>Next-day: %{y:.0f}<extra></extra>",
                 customdata=recent["date"].dt.strftime("%b %d"),

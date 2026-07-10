@@ -28,17 +28,20 @@ st.set_page_config(
 )
 
 # ── Theme ────────────────────────────────────────────────────────────────
-_palette = CHART_CONFIG["color_palette"]
+from insights_engine.viz import theme as _viz_theme
 
 # Dark mode toggle (persisted in session state)
 if "dark_mode" not in st.session_state:
     st.session_state.dark_mode = True
 
 _dark = st.session_state.dark_mode
-_bg = _palette["background"] if _dark else "#FFFFFF"
-_surface = _palette["surface"] if _dark else "#F1F5F9"
-_text = _palette["text"] if _dark else "#1E293B"
-_text_muted = _palette["text_muted"] if _dark else "#64748B"
+# Keep Plotly charts in sync with the UI toggle (fixes dark charts on light page)
+_viz_theme.set_dark_mode(_dark)
+_palette = _viz_theme.palette()
+_bg = _palette["background"]
+_surface = _palette["surface"]
+_text = _palette["text"]
+_text_muted = _palette["text_muted"]
 
 st.markdown(f"""
 <style>

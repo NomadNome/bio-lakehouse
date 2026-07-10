@@ -28,19 +28,39 @@ CLAUDE_CONFIG = {
     "max_tokens": 2048,
 }
 
-# Chart Styling (from PRD)
+# Chart Styling
+# Categorical slots (primary..extra2) are CVD-validated as an ordered set per
+# surface (worst adjacent deltaE: 27.6 dark / 25.0 light; target >= 12).
+# warning/danger/success are STATUS colors — reserved for zones/alerts/risk,
+# never used as data-series colors.
 CHART_CONFIG = {
-    "color_palette": {
-        "primary": "#6366F1",       # Indigo
-        "secondary": "#EC4899",     # Pink
-        "accent": "#14B8A6",        # Teal
-        "warning": "#F59E0B",       # Amber
-        "danger": "#EF4444",        # Red
-        "success": "#22C55E",       # Green
+    "color_palette": {              # dark mode (default)
+        "primary": "#3987e5",       # blue    — categorical slot 1
+        "secondary": "#d55181",     # magenta — slot 2
+        "accent": "#9085e9",        # violet  — slot 3
+        "extra1": "#d95926",        # orange  — slot 4
+        "extra2": "#199e70",        # aqua    — slot 5
+        "warning": "#F59E0B",       # Amber (status)
+        "danger": "#EF4444",        # Red (status)
+        "success": "#22C55E",       # Green (status)
         "background": "#1E1E2E",    # Dark
         "surface": "#2D2D3F",       # Dark surface
         "text": "#E2E8F0",          # Light gray
         "text_muted": "#94A3B8",    # Muted gray
+    },
+    "color_palette_light": {
+        "primary": "#2a78d6",
+        "secondary": "#d55181",
+        "accent": "#4a3aa7",
+        "extra1": "#eb6834",
+        "extra2": "#1baf7a",
+        "warning": "#B45309",       # darker status steps for the white surface
+        "danger": "#DC2626",
+        "success": "#15803D",
+        "background": "#FFFFFF",
+        "surface": "#F1F5F9",
+        "text": "#1E293B",
+        "text_muted": "#64748B",
     },
     "font_family": "Inter, system-ui, sans-serif",
     "chart_height": 400,

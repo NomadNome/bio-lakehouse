@@ -59,3 +59,6 @@ dbt_bio_lakehouse/.user.yml
 
 # Lambda build artifacts
 lambda/**/*.zip
+
+# Ingestion inbox (raw exports, never commit)
+inbox/

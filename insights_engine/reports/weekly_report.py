@@ -49,9 +49,9 @@ INSIGHT_ICONS = {
 }
 
 INSIGHT_COLORS = {
-    "sleep_readiness": "#6366F1",
-    "workout_recovery": "#EC4899",
-    "readiness_trend": "#14B8A6",
+    "sleep_readiness": "#3987e5",
+    "workout_recovery": "#d55181",
+    "readiness_trend": "#199e70",
     "anomaly_detection": "#F59E0B",
     "timing_correlation": "#22C55E",
     "hrv_trend": "#8B5CF6",
@@ -432,7 +432,7 @@ Write the report following the structure in your instructions. Focus on what CHA
                 "narrative": r.narrative,
                 "caveats": r.caveats,
                 "icon": INSIGHT_ICONS.get(r.insight_type, "📊"),
-                "color": INSIGHT_COLORS.get(r.insight_type, "#6366F1"),
+                "color": INSIGHT_COLORS.get(r.insight_type, "#3987e5"),
                 "chart_b64": chart_images.get(r.insight_type),
             })
 

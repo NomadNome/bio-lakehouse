@@ -18,12 +18,34 @@ from scipy import stats
 
 from insights_engine.config import CHART_CONFIG
 from insights_engine.experiments.analyzer import BayesianResult, CorrelationResult, DiDResult
+from insights_engine.viz import theme as _theme
 
-_palette = CHART_CONFIG["color_palette"]
+
+class _ModePalette:
+    """Dict-like proxy that always reads the active theme mode's palette."""
+
+    def __getitem__(self, key: str) -> str:
+        return _theme.palette()[key]
 
 
-def _chart_layout(fig: go.Figure, title: str = "", height: int = 400, dark: bool = True) -> go.Figure:
+_palette = _ModePalette()
+
+
+def _resolve_dark(dark: bool | None) -> bool:
+    """Callers that don't specify a mode follow the active theme."""
+    return _theme.is_dark() if dark is None else dark
+
+
+def _rgba(hex_color: str, alpha: float) -> str:
+    """hex '#rrggbb' -> 'rgba(r, g, b, a)' for translucent fills."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r}, {g}, {b}, {alpha})"
+
+
+def _chart_layout(fig: go.Figure, title: str = "", height: int = 400, dark: bool | None = None) -> go.Figure:
     """Apply standard layout settings."""
+    dark = _resolve_dark(dark)
     fig.update_layout(
         title=title,
         height=height,
@@ -43,7 +65,7 @@ def intervention_timeline(
     intervention_name: str,
     start_date: str,
     end_date: str | None = None,
-    dark: bool = True,
+    dark: bool | None = None,
 ) -> go.Figure:
     """Metric line chart with colored intervention rectangle overlay."""
     fig = go.Figure()
@@ -105,7 +127,7 @@ def before_after_distribution(
     pre_values: np.ndarray,
     post_values: np.ndarray,
     metric_label: str,
-    dark: bool = True,
+    dark: bool | None = None,
 ) -> go.Figure:
     """Violin/box plot comparing pre and post distributions."""
     fig = go.Figure()
@@ -133,7 +155,7 @@ def before_after_distribution(
 
 def posterior_plot(
     result: BayesianResult,
-    dark: bool = True,
+    dark: bool | None = None,
 ) -> go.Figure:
     """Normal posterior distribution with shaded 95% CI and zero line."""
     fig = go.Figure()
@@ -160,7 +182,7 @@ def posterior_plot(
     fig.add_trace(go.Scatter(
         x=x[ci_mask], y=y[ci_mask],
         fill="tozeroy", name="95% CI",
-        fillcolor=f"rgba(99, 102, 241, 0.3)",
+        fillcolor=_rgba(_palette["primary"], 0.3),
         line=dict(width=0),
     ))
 
@@ -208,7 +230,7 @@ def correlation_scatter(
     result: CorrelationResult,
     input_label: str,
     outcome_label: str,
-    dark: bool = True,
+    dark: bool | None = None,
 ) -> go.Figure:
     """Scatter plot with OLS regression line and stats annotation."""
     fig = go.Figure()
@@ -274,7 +296,7 @@ def rolling_correlation_chart(
     result: CorrelationResult,
     input_label: str,
     outcome_label: str,
-    dark: bool = True,
+    dark: bool | None = None,
 ) -> go.Figure:
     """Rolling Pearson r over time with reference lines."""
     fig = go.Figure()
