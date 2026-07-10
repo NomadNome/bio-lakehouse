@@ -1,7 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-PROJECT_DIR="/Users/nomathadejenkins/Desktop/Bio Lakehouse"
+PROJECT_DIR="$HOME/Projects/bio-lakehouse"
+VENV="$HOME/.local/share/bio-lakehouse-venv"
 cd "$PROJECT_DIR"
 
 # Load environment variables (ANTHROPIC_API_KEY, AWS config, etc.)
@@ -11,8 +12,7 @@ if [ -f .env ]; then
     set +a
 fi
 
-# Activate virtual environment
-source .venv/bin/activate
+export BIO_PROJECT_ROOT="$PROJECT_DIR"
+export PYTHONPATH="$PROJECT_DIR"
 
-# Run the weekly report generator
-python scripts/run_weekly_report.py "$@"
+"$VENV/bin/python" scripts/run_weekly_report.py "$@"

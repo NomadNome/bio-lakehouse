@@ -391,7 +391,6 @@ Write the report following the structure in your instructions. Focus on what CHA
         response = self.client.messages.create(
             model=self.model,
             max_tokens=2048,
-            temperature=0.4,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )

@@ -11,7 +11,7 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}"
 BUCKET="bio-lakehouse-bronze-${AWS_ACCOUNT_ID}"
 REGION="us-east-1"
-PROJECT_DIR="$HOME/Desktop/Bio Lakehouse"
+PROJECT_DIR="$HOME/Projects/bio-lakehouse"
 VENV="$HOME/.local/share/bio-lakehouse-venv"
 BATCH_DATE=$(date +%Y-%m-%d)
 TODAY=$(date +%Y-%m-%d)
@@ -32,15 +32,15 @@ echo "--- Step 1: Find Latest Files ---"
 
 INBOX="$PROJECT_DIR/inbox"
 
-# Check inbox first (launchd-safe), fallback to ~/Downloads (manual runs)
-HK_ZIP=$(ls -t "$INBOX"/export*.zip 2>/dev/null | head -1)
-[ -z "$HK_ZIP" ] && HK_ZIP=$(ls -t ~/Downloads/export*.zip 2>/dev/null | head -1)
+# Pick the newest file across inbox AND Downloads (whichever is fresher wins)
+pick_newest() {
+    local pattern="$1"
+    { ls -t "$INBOX"/$pattern ~/Downloads/$pattern 2>/dev/null || true; } | head -1
+}
 
-PELO_CSV=$(ls -t "$INBOX"/KnownasNoma_workouts*.csv 2>/dev/null | head -1)
-[ -z "$PELO_CSV" ] && PELO_CSV=$(ls -t ~/Downloads/KnownasNoma_workouts*.csv 2>/dev/null | head -1)
-
-MFP_CSV=$(ls -t "$INBOX"/Nutrition-Summary*.csv 2>/dev/null | head -1)
-[ -z "$MFP_CSV" ] && MFP_CSV=$(ls -t ~/Downloads/Nutrition-Summary*.csv 2>/dev/null | head -1 || true)
+HK_ZIP=$(pick_newest "export*.zip")
+PELO_CSV=$(pick_newest "KnownasNoma_workouts*.csv")
+MFP_CSV=$(pick_newest "Nutrition-Summary*.csv" || true)
 
 if [ -z "$HK_ZIP" ]; then
     echo "  ERROR: No HealthKit export found in ~/Downloads/. Please export from your phone first."
@@ -102,7 +102,7 @@ echo ""
 echo "--- Step 3: Split Peloton ---"
 
 rm -rf /tmp/peloton_daily_split
-"$VENV/bin/python"3 -c "
+"$VENV/bin/python3" -c "
 import csv, os, re
 from datetime import datetime, timedelta
 
@@ -221,9 +221,14 @@ start_or_attach() {
         echo "$run_id"
         return
     fi
-    # ConcurrentRunsExceededException — attach to the existing run
-    aws glue get-job-runs --job-name "$job_name" --region "$REGION" --max-results 1 \
-        --query 'JobRuns[0].Id' --output text
+    # ConcurrentRunsExceededException — attach to the existing RUNNING/STARTING run
+    run_id=$(aws glue get-job-runs --job-name "$job_name" --region "$REGION" --max-results 5 \
+        --query 'JobRuns[?JobRunState==`RUNNING` || JobRunState==`STARTING`]|[0].Id' --output text)
+    if [ -z "$run_id" ] || [ "$run_id" = "None" ]; then
+        echo "ERROR: could not start $job_name and no active run to attach to" >&2
+        return 1
+    fi
+    echo "$run_id"
 }
 
 OURA_RUN=$(start_or_attach bio-lakehouse-oura-normalizer \
@@ -254,19 +259,17 @@ while true; do
 
     FAILED=0
     for state in "$OURA" "$HK" "$PELO" "$MFP"; do
-        if [ "$state" = "FAILED" ]; then
-            FAILED=1
-        fi
+        case "$state" in
+            FAILED|STOPPED|TIMEOUT|ERROR) FAILED=1 ;;
+        esac
     done
     if [ "$FAILED" -eq 1 ]; then
-        echo "  ERROR: A normalizer FAILED. Check AWS Glue console."
+        echo "  ERROR: A normalizer ended in a failed state (FAILED/STOPPED/TIMEOUT/ERROR). Check AWS Glue console."
         exit 1
     fi
 
-    if [ "$OURA" != "RUNNING" ] && [ "$OURA" != "STARTING" ] && \
-       [ "$HK" != "RUNNING" ] && [ "$HK" != "STARTING" ] && \
-       [ "$PELO" != "RUNNING" ] && [ "$PELO" != "STARTING" ] && \
-       [ "$MFP" != "RUNNING" ] && [ "$MFP" != "STARTING" ]; then
+    if [ "$OURA" = "SUCCEEDED" ] && [ "$HK" = "SUCCEEDED" ] && \
+       [ "$PELO" = "SUCCEEDED" ] && [ "$MFP" = "SUCCEEDED" ]; then
         break
     fi
     sleep 20
@@ -308,7 +311,9 @@ while true; do
     STATE=$(aws glue get-job-run --job-name bio-lakehouse-dbt-gold-refresh --run-id "$GOLD_RUN" \
         --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
     echo "  $(date +%H:%M:%S) Gold refresh: $STATE"
-    if [ "$STATE" = "SUCCEEDED" ] || [ "$STATE" = "FAILED" ] || [ "$STATE" = "STOPPED" ]; then break; fi
+    case "$STATE" in
+        SUCCEEDED|FAILED|STOPPED|TIMEOUT|ERROR) break ;;
+    esac
     sleep 15
 done
 
@@ -351,9 +356,22 @@ QID=$(aws athena start-query-execution \
     --region "$REGION" --output text --query 'QueryExecutionId')
 
 echo "  Athena query: $QID"
-sleep 5
 
-aws athena get-query-results --query-execution-id "$QID" --region "$REGION" --output table
+# Poll for completion (up to ~2 min) instead of a fixed sleep; a slow or failed
+# verification query must not abort the pipeline before Streamlit/briefing run.
+QSTATE="RUNNING"
+for _ in $(seq 1 24); do
+    QSTATE=$(aws athena get-query-execution --query-execution-id "$QID" --region "$REGION" \
+        --query 'QueryExecution.Status.State' --output text)
+    case "$QSTATE" in SUCCEEDED|FAILED|CANCELLED) break ;; esac
+    sleep 5
+done
+
+if [ "$QSTATE" = "SUCCEEDED" ]; then
+    aws athena get-query-results --query-execution-id "$QID" --region "$REGION" --output table
+else
+    echo "  WARNING: verification query ended in state $QSTATE — continuing anyway."
+fi
 
 # -----------------------------------------------
 # STEP 10: Restart Streamlit
@@ -401,13 +419,34 @@ if [ "$(date +%u)" = "7" ]; then
     echo ""
     echo "--- Step 12: Weekly Correlation Discovery ---"
     cd "$PROJECT_DIR"
-    cp -f "$PROJECT_DIR/.env" "$HOME/.local/share/bio-lakehouse-src/.env" 2>/dev/null || true
-    PYTHONPATH="$HOME/.local/share/bio-lakehouse-src" BIO_PROJECT_ROOT="$HOME/.local/share/bio-lakehouse-src" "$VENV/bin/python" scripts/run_correlation_discovery.py 2>&1 | tail -20
+    PYTHONPATH="$PROJECT_DIR" BIO_PROJECT_ROOT="$PROJECT_DIR" "$VENV/bin/python" scripts/run_correlation_discovery.py 2>&1 | tail -20
     echo "  Weekly discovery complete."
 else
     echo ""
     echo "--- Step 12: Weekly Correlation Discovery (skipped — not Sunday) ---"
 fi
+
+# -----------------------------------------------
+# STEP 13: Cleanup Old Files
+# -----------------------------------------------
+echo ""
+echo "--- Step 13: Cleanup Old Files ---"
+
+# Keep only the 2 newest exports in inbox, delete the rest
+for pattern in "export*.zip" "KnownasNoma_workouts*.csv" "Nutrition-Summary*.csv"; do
+    { ls -t "$INBOX"/$pattern 2>/dev/null || true; } | tail -n +3 | while read f; do
+        rm "$f" && echo "  Deleted old: $(basename "$f")"
+    done
+done
+
+# Keep only the 2 newest exports in Downloads too
+for pattern in "export*.zip" "KnownasNoma_workouts*.csv"; do
+    { ls -t ~/Downloads/$pattern 2>/dev/null || true; } | tail -n +3 | while read f; do
+        rm "$f" && echo "  Deleted old download: $(basename "$f")"
+    done
+done
+
+echo "  Cleanup complete!"
 
 echo ""
 echo "========================================"

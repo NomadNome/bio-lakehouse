@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/scripts/check_pipeline_health.sh</string>
+        <string>/Users/nomathadejenkins/Projects/bio-lakehouse/scripts/check_pipeline_health.sh</string>
     </array>
 
     <key>StartCalendarInterval</key>
@@ -20,7 +20,12 @@
     </dict>
 
     <key>WorkingDirectory</key>
-    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse</string>
+    <string>/Users/nomathadejenkins/Projects/bio-lakehouse</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/nomathadejenkins/.local/share/bio-lakehouse-logs/health-check.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/nomathadejenkins/.local/share/bio-lakehouse-logs/health-check-error.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>

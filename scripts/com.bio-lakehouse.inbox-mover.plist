@@ -8,13 +8,18 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/scripts/move_downloads_to_inbox.sh</string>
+        <string>/Users/nomathadejenkins/Projects/bio-lakehouse/scripts/move_downloads_to_inbox.sh</string>
     </array>
 
     <key>WatchPaths</key>
     <array>
         <string>/Users/nomathadejenkins/Downloads</string>
     </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/nomathadejenkins/.local/share/bio-lakehouse-logs/inbox-mover.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/nomathadejenkins/.local/share/bio-lakehouse-logs/inbox-mover-error.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>

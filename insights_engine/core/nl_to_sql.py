@@ -116,7 +116,6 @@ class NLToSQLEngine:
         response = self.client.messages.create(
             model=self.model,
             max_tokens=CLAUDE_CONFIG["max_tokens"],
-            temperature=CLAUDE_CONFIG["temperature"],
             system=system_prompt,
             messages=messages,
         )
@@ -247,7 +246,6 @@ Write a concise, natural language answer to the user's question based on these r
         response = self.client.messages.create(
             model=self.model,
             max_tokens=512,
-            temperature=0.3,
             messages=[{"role": "user", "content": prompt}],
         )
         return response.content[0].text.strip()

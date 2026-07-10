@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "streamlit-app",
+      "runtimeExecutable": "streamlit",
+      "runtimeArgs": ["run", "insights_engine/app.py"],
+      "port": 8501
+    },
+    {
+      "name": "dbt-docs",
+      "runtimeExecutable": "dbt",
+      "runtimeArgs": ["docs", "generate", "&&", "dbt", "docs", "serve", "--port", "8080"],
+      "port": 8080
+    }
+  ]
+}

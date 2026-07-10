@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/scripts/run-weekly-report.sh</string>
+        <string>/Users/nomathadejenkins/Projects/bio-lakehouse/scripts/run-weekly-report.sh</string>
     </array>
 
     <key>StartCalendarInterval</key>
@@ -21,12 +21,18 @@
         <integer>0</integer>
     </dict>
 
-    <key>StandardOutPath</key>
-    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/logs/weekly-report.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/logs/weekly-report-error.log</string>
-
     <key>WorkingDirectory</key>
-    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse</string>
+    <string>/Users/nomathadejenkins/Projects/bio-lakehouse</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/nomathadejenkins/.local/share/bio-lakehouse-logs/weekly-report.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/nomathadejenkins/.local/share/bio-lakehouse-logs/weekly-report-error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/nomathadejenkins</string>
+    </dict>
 </dict>
 </plist>

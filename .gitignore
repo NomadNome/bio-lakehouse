@@ -56,3 +56,6 @@ dbt_bio_lakehouse/dbt_packages/
 dbt_bio_lakehouse/logs/
 dbt_bio_lakehouse/profiles.yml
 dbt_bio_lakehouse/.user.yml
+
+# Lambda build artifacts
+lambda/**/*.zip

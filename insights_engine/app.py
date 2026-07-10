@@ -3,7 +3,7 @@ Bio Insights Engine - Streamlit Application
 
 Multi-page app with:
   1. Ask — NL-to-SQL chat interface
-  2. Insights — 5 signature insight charts
+  2. Insights — 11 signature insight charts
   3. Weekly Report — latest generated report
 """
 
@@ -335,7 +335,7 @@ if page == "💬 Ask":
                 with st.expander(f"Show Data ({len(msg['data'])} rows)"):
                     st.dataframe(msg["data"], width="stretch")
             if msg.get("chart") is not None:
-                st.plotly_chart(msg["chart"], use_container_width=True)
+                st.plotly_chart(msg["chart"], width="stretch")
 
     # Chat input
     if question := st.chat_input("e.g., What was my average readiness last week?"):
@@ -374,7 +374,7 @@ if page == "💬 Ask":
                         # Auto-chart
                         fig = _auto_chart(result.data)
                         if fig:
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, width="stretch")
 
                         # Metadata
                         cols = st.columns(3)
@@ -420,7 +420,7 @@ if page == "💬 Ask":
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# PAGE 2: INSIGHTS (5 Signature Charts)
+# PAGE 2: INSIGHTS (11 Signature Charts)
 # ══════════════════════════════════════════════════════════════════════════
 elif page == "📊 Insights":
     st.header("Signature Insights")
@@ -571,7 +571,7 @@ elif page == "📊 Insights":
             showlegend=False,
             margin=dict(l=60, r=20, t=40, b=20),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         csv_download(hk_vitals, "healthkit_vitals_90d.csv", "Download Vitals CSV")
 
@@ -706,7 +706,7 @@ elif page == "📊 Insights":
                     showlegend=False,
                     margin=dict(l=60, r=20, t=40, b=20),
                 )
-                st.plotly_chart(fig_body, use_container_width=True)
+                st.plotly_chart(fig_body, width="stretch")
 
             # ── Body comp vs. performance correlation ──
             if has_weight or has_bf:
@@ -763,7 +763,7 @@ elif page == "📊 Insights":
             st.markdown("**Weekly Trends**")
             st.dataframe(
                 display_weekly.style.format(fmt, na_rep="—"),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
             csv_download(body_data, "body_composition.csv", "Download Body Comp CSV")
@@ -829,7 +829,7 @@ elif page == "📊 Insights":
                 showlegend=True, legend=dict(orientation="h", y=1.12),
                 margin=dict(l=50, r=20, t=60, b=20),
             )
-            st.plotly_chart(fig_sd, use_container_width=True)
+            st.plotly_chart(fig_sd, width="stretch")
 
             csv_download(sleep_debt_df, "sleep_debt_60d.csv", "Download Sleep Debt CSV")
 
@@ -903,7 +903,7 @@ elif page == "📊 Insights":
                 showlegend=False,
                 margin=dict(l=50, r=20, t=60, b=20),
             )
-            st.plotly_chart(fig_hrv, use_container_width=True)
+            st.plotly_chart(fig_hrv, width="stretch")
 
             csv_download(hrv_vel_df, "hrv_velocity_60d.csv", "Download HRV Velocity CSV")
 
@@ -1076,7 +1076,7 @@ elif page == "🔮 What-If":
                 help="Including tomorrow if you plan to work out",
             )
 
-            simulate_clicked = st.button("Simulate", type="primary", use_container_width=True)
+            simulate_clicked = st.button("Simulate", type="primary", width="stretch")
 
         # ── Run simulation (auto-run on first load, then on button click) ─
         run_sim = simulate_clicked or "whatif_latest" not in st.session_state
@@ -1118,7 +1118,7 @@ elif page == "🔮 What-If":
                     result.confidence_range,
                     baseline["avg_readiness_7d"],
                 )
-                st.plotly_chart(gauge_fig, use_container_width=True)
+                st.plotly_chart(gauge_fig, width="stretch")
 
                 # Metrics row
                 m1, m2, m3 = st.columns(3)
@@ -1195,7 +1195,7 @@ elif page == "🔮 What-If":
             st.divider()
             st.subheader("Compare Scenarios")
             comp_fig = scenario_comparison_chart(saved)
-            st.plotly_chart(comp_fig, use_container_width=True)
+            st.plotly_chart(comp_fig, width="stretch")
 
         if saved:
             if st.button("Clear Scenarios"):
@@ -1270,7 +1270,7 @@ elif page == "🔮 What-If":
                     ))
                 day_idx += 1
 
-        project_clicked = st.button("Project Readiness", type="primary", use_container_width=True)
+        project_clicked = st.button("Project Readiness", type="primary", width="stretch")
 
         if project_clicked:
             with st.spinner("Running multi-day projection..."):
@@ -1281,7 +1281,7 @@ elif page == "🔮 What-If":
         if mdr and mdr.projections:
             # ── Projection chart ─────────────────────────────────────
             proj_fig = multi_day_projection_chart(mdr.projections, mdr.baseline_readiness_7d)
-            st.plotly_chart(proj_fig, use_container_width=True)
+            st.plotly_chart(proj_fig, width="stretch")
 
             # ── Summary ──────────────────────────────────────────────
             st.info(mdr.plan_summary)
@@ -1402,7 +1402,7 @@ elif page == "🎯 Predictions":
                     paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0)",
                 )
-                st.plotly_chart(gauge_fig, use_container_width=True)
+                st.plotly_chart(gauge_fig, width="stretch")
 
             with col_metrics:
                 st.metric("Predicted Score", f"{predicted:.0f}")
@@ -1441,7 +1441,7 @@ elif page == "🎯 Predictions":
                             "CV RMSE": res.get("cv_rmse", "—"),
                             "CV R²": res.get("cv_r2", "—"),
                         })
-                    st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
+                    st.dataframe(pd.DataFrame(comp_rows), hide_index=True, width="stretch")
 
             # ── MLflow history ──
             try:
@@ -1459,7 +1459,7 @@ elif page == "🎯 Predictions":
                         if not runs.empty:
                             display_cols = [c for c in ["run_id", "tags.mlflow.runName", "params.model_type",
                                                          "metrics.cv_mae", "metrics.cv_r2", "start_time"] if c in runs.columns]
-                            st.dataframe(runs[display_cols], hide_index=True, use_container_width=True)
+                            st.dataframe(runs[display_cols], hide_index=True, width="stretch")
                             st.caption(f"View full history: `mlflow ui --backend-store-uri {TRACKING_URI}`")
             except (ImportError, Exception):
                 pass
@@ -1496,7 +1496,7 @@ elif page == "🎯 Predictions":
                         xaxis_title="Feature Importance",
                         margin=dict(l=20, r=20, t=30, b=20),
                     )
-                    st.plotly_chart(fig_imp, use_container_width=True)
+                    st.plotly_chart(fig_imp, width="stretch")
 
                 # ── Backtest: Over Time ──
                 st.subheader("Backtest: Predicted vs Actual")
@@ -1525,7 +1525,7 @@ elif page == "🎯 Predictions":
                         paper_bgcolor="rgba(0,0,0,0)",
                         plot_bgcolor="rgba(0,0,0,0)",
                     )
-                    st.plotly_chart(fig_time, use_container_width=True)
+                    st.plotly_chart(fig_time, width="stretch")
                 else:
                     st.info("No backtest data available. Run training to generate backtest results.")
 
@@ -1561,7 +1561,7 @@ elif page == "🎯 Predictions":
                             plot_bgcolor="rgba(0,0,0,0)",
                             showlegend=False,
                         )
-                        st.plotly_chart(fig_resid, use_container_width=True)
+                        st.plotly_chart(fig_resid, width="stretch")
 
                     # Learning curve: MAE vs training set size
                     with diag_col2:
@@ -1585,7 +1585,7 @@ elif page == "🎯 Predictions":
                                 paper_bgcolor="rgba(0,0,0,0)",
                                 plot_bgcolor="rgba(0,0,0,0)",
                             )
-                            st.plotly_chart(fig_lc, use_container_width=True)
+                            st.plotly_chart(fig_lc, width="stretch")
 
                     # Residual statistics
                     st.markdown("**Residual Statistics**")
@@ -1602,7 +1602,7 @@ elif page == "🎯 Predictions":
                             "Feature": list(importances.keys()),
                             "Importance": [round(v, 4) for v in importances.values()],
                         })
-                        st.dataframe(imp_df_diag, hide_index=True, use_container_width=True)
+                        st.dataframe(imp_df_diag, hide_index=True, width="stretch")
                 else:
                     st.info("Run model training to generate diagnostics data.")
 
@@ -1683,7 +1683,7 @@ elif page == "🧪 Experiments":
                     })
                 summary_df = exp_viz.experiment_summary_table(summary_data)
                 if not summary_df.empty:
-                    st.dataframe(summary_df, hide_index=True, use_container_width=True)
+                    st.dataframe(summary_df, hide_index=True, width="stretch")
 
     # ── Log New Intervention Tab ──
     with exp_tab_log:
@@ -1793,17 +1793,17 @@ elif page == "🧪 Experiments":
                                     sel_intv.name, sel_intv.start_date, sel_intv.end_date,
                                     dark=_dark,
                                 )
-                                st.plotly_chart(timeline_fig, use_container_width=True)
+                                st.plotly_chart(timeline_fig, width="stretch")
 
                             with chart_col2:
                                 dist_fig = exp_viz.before_after_distribution(
                                     pre_vals, post_vals, metric_label, dark=_dark,
                                 )
-                                st.plotly_chart(dist_fig, use_container_width=True)
+                                st.plotly_chart(dist_fig, width="stretch")
 
                             # Posterior plot
                             post_fig = exp_viz.posterior_plot(bayes, dark=_dark)
-                            st.plotly_chart(post_fig, use_container_width=True)
+                            st.plotly_chart(post_fig, width="stretch")
 
                             # ── DiD Analysis ──
                             st.markdown("### Difference-in-Differences")
@@ -1915,13 +1915,13 @@ elif page == "🧪 Experiments":
                             scatter_fig = exp_viz.correlation_scatter(
                                 result, input_label, outcome_label, dark=_dark,
                             )
-                            st.plotly_chart(scatter_fig, use_container_width=True)
+                            st.plotly_chart(scatter_fig, width="stretch")
                         with chart_c2:
                             if result.rolling_r_values:
                                 rolling_fig = exp_viz.rolling_correlation_chart(
                                     result, input_label, outcome_label, dark=_dark,
                                 )
-                                st.plotly_chart(rolling_fig, use_container_width=True)
+                                st.plotly_chart(rolling_fig, width="stretch")
                             else:
                                 st.info("Not enough data for rolling correlation chart.")
 
@@ -2148,7 +2148,7 @@ elif page == "🔍 Discoveries":
                     xaxis=dict(tickangle=-45),
                     margin=dict(l=150, b=150),
                 )
-                st.plotly_chart(_hm_fig, use_container_width=True)
+                st.plotly_chart(_hm_fig, width="stretch")
 
         # ── Save to S3 button ───────────────────────────────────────────
         if st.button("Save to S3"):

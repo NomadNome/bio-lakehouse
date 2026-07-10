@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/scripts/daily_ingestion_wrapper.sh</string>
+        <string>/Users/nomathadejenkins/.local/share/bio-lakehouse-run-pipeline.sh</string>
     </array>
 
     <key>StartCalendarInterval</key>
@@ -20,12 +20,12 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/logs/daily-ingestion.log</string>
+    <string>/Users/nomathadejenkins/.local/share/bio-lakehouse-logs/daily-ingestion.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse/logs/daily-ingestion-error.log</string>
+    <string>/Users/nomathadejenkins/.local/share/bio-lakehouse-logs/daily-ingestion-error.log</string>
 
     <key>WorkingDirectory</key>
-    <string>/Users/nomathadejenkins/Desktop/Bio Lakehouse</string>
+    <string>/Users/nomathadejenkins/.local/share</string>
 
     <key>EnvironmentVariables</key>
     <dict>
