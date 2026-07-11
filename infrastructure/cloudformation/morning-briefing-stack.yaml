@@ -94,6 +94,11 @@ Resources:
                 Action:
                   - 'sns:Publish'
                 Resource: !Ref MorningBriefingTopic
+              # SSM SecureString read (Anthropic API key for narration)
+              - Effect: Allow
+                Action:
+                  - 'ssm:GetParameter'
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/bio-lakehouse/anthropic-api-key'
       Tags:
         - Key: Project
           Value: !Ref ProjectPrefix
@@ -118,6 +123,9 @@ Resources:
           SNS_TOPIC_ARN: !Ref MorningBriefingTopic
           ATHENA_DATABASE: bio_gold
           ATHENA_RESULTS_BUCKET: !Sub '${ProjectPrefix}-athena-results-${AWS::AccountId}'
+          GOLD_BUCKET: !Sub '${ProjectPrefix}-gold-${AWS::AccountId}'
+          ANTHROPIC_KEY_PARAM: '/bio-lakehouse/anthropic-api-key'
+          NARRATOR_MODEL: 'claude-sonnet-5'
       Tags:
         - Key: Project
           Value: !Ref ProjectPrefix

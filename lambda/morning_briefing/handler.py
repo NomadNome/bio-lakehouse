@@ -27,8 +27,33 @@ SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
 ATHENA_DATABASE = os.environ.get("ATHENA_DATABASE", "bio_gold")
 ATHENA_RESULTS_BUCKET = os.environ.get("ATHENA_RESULTS_BUCKET", "")
 GOLD_BUCKET = os.environ.get("GOLD_BUCKET", "")
+ANTHROPIC_KEY_PARAM = os.environ.get("ANTHROPIC_KEY_PARAM", "")
+NARRATOR_MODEL = os.environ.get("NARRATOR_MODEL", "claude-sonnet-5")
 
 s3 = boto3.client("s3")
+
+_anthropic_client = None
+
+
+def _get_anthropic_client():
+    """Lazily build the Anthropic client from the SSM SecureString key."""
+    global _anthropic_client
+    if _anthropic_client is not None:
+        return _anthropic_client
+    if not ANTHROPIC_KEY_PARAM:
+        return None
+    try:
+        ssm = boto3.client("ssm")
+        key = ssm.get_parameter(Name=ANTHROPIC_KEY_PARAM, WithDecryption=True)[
+            "Parameter"
+        ]["Value"]
+        import anthropic
+
+        _anthropic_client = anthropic.Anthropic(api_key=key)
+    except Exception as e:
+        print(f"Narration disabled (no client): {e}")
+        _anthropic_client = None
+    return _anthropic_client
 
 
 def run_athena_query(sql):
@@ -247,12 +272,86 @@ def build_briefing():
                 f"7-day avg: {avg_tss_7d:.0f}"
             )
 
-    # Bullet 5: Latest correlation discovery (if < 8 days old)
+    # Bullet 5: Today's session from the saved Coach plan (if current)
+    coach_bullet = _get_coach_session()
+    if coach_bullet:
+        bullets.append(f"Today's plan: {coach_bullet}")
+
+    # Bullet 6: Latest correlation discovery (if < 8 days old)
     discovery_bullet = _get_latest_discovery()
     if discovery_bullet:
         bullets.append(f"Discovery: {discovery_bullet}")
 
     return latest_date, bullets
+
+
+def _get_coach_session():
+    """Read today's prescribed session from the saved Coach plan on S3."""
+    if not GOLD_BUCKET:
+        return None
+    try:
+        obj = s3.get_object(Bucket=GOLD_BUCKET, Key="coach/current_plan.json")
+        plan = json.loads(obj["Body"].read().decode("utf-8"))
+
+        generated = date.fromisoformat(plan.get("generated_at", "1970-01-01"))
+        if (date.today() - generated).days > 8:
+            return None  # plan has lapsed
+
+        today_str = date.today().isoformat()
+        for day in plan.get("days", []):
+            if day.get("date") == today_str:
+                if day.get("intensity") == "none":
+                    return f"Rest day. {day.get('why', '')}".strip()
+                discipline = day.get("discipline", "").replace("_", " + ").title()
+                return (
+                    f"{discipline} — {day.get('intensity')} "
+                    f"(~{day.get('target_tss', 0):.0f} TSS). {day.get('why', '')}"
+                ).strip()
+    except s3.exceptions.NoSuchKey:
+        pass
+    except Exception as e:
+        print(f"Could not load coach plan: {e}")
+    return None
+
+
+def narrate_briefing(latest_date, bullets):
+    """Turn the data bullets into a short coach-style narrative via Claude.
+
+    Returns None on any failure — the briefing always falls back to the
+    plain template so a model/API problem can never break the email.
+    """
+    client = _get_anthropic_client()
+    if client is None or not bullets:
+        return None
+
+    facts = "\n".join(f"- {b}" for b in bullets)
+    prompt = (
+        f"Here are today's health metrics and context for {latest_date}:\n\n"
+        f"{facts}\n\n"
+        "Write a morning briefing of 3-5 sentences in plain text (no markdown, "
+        "no headers, no emoji). Lead with the single most important thing about "
+        "today. Use only the numbers provided — do not invent any. If a "
+        "prescribed training session is listed, weave it in as today's plan. "
+        "End with one concrete, actionable sentence. Sound like a calm, "
+        "knowledgeable coach, not a cheerleader."
+    )
+
+    try:
+        response = client.messages.create(
+            model=NARRATOR_MODEL,
+            max_tokens=400,
+            system=(
+                "You are the narrator for a personal health data platform that "
+                "fuses Oura, Peloton, Apple Health, and nutrition data. You write "
+                "brief, grounded morning briefings. Accuracy over enthusiasm."
+            ),
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(b.text for b in response.content if b.type == "text").strip()
+        return text or None
+    except Exception as e:
+        print(f"Narration failed, falling back to template: {e}")
+        return None
 
 
 def _get_latest_discovery():
@@ -302,7 +401,7 @@ def _get_latest_discovery():
     return None
 
 
-def publish_briefing(latest_date, bullets):
+def publish_briefing(latest_date, bullets, narrative=None):
     """Publish the morning briefing to SNS."""
     if not SNS_TOPIC_ARN:
         print("No SNS_TOPIC_ARN configured, skipping publish")
@@ -321,6 +420,8 @@ def publish_briefing(latest_date, bullets):
         f"(Latest data: {latest_date})",
         "",
     ]
+    if narrative:
+        body_lines.extend([narrative, "", "— The numbers —", ""])
     for i, bullet in enumerate(bullets, 1):
         body_lines.append(f"{i}. {bullet}")
 
@@ -353,7 +454,11 @@ def lambda_handler(event, context):
             print(f"  - {b}")
 
         if bullets:
-            publish_briefing(latest_date, bullets)
+            is_stale = any("DATA STALE" in b for b in bullets)
+            narrative = None if is_stale else narrate_briefing(latest_date, bullets)
+            if narrative:
+                print(f"Narrative generated ({len(narrative)} chars)")
+            publish_briefing(latest_date, bullets, narrative)
         else:
             print("No data available for briefing.")
 

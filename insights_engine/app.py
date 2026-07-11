@@ -104,7 +104,7 @@ with st.sidebar:
     st.title("🧬 Bio Insights")
     page = st.radio(
         "Navigate",
-        ["💬 Ask", "📊 Insights", "📋 Weekly Report", "🔮 What-If", "🎯 Predictions", "🧪 Experiments", "🔍 Discoveries", "📤 Export"],
+        ["💬 Ask", "📊 Insights", "📋 Weekly Report", "🔮 What-If", "🏋️ Coach", "🎯 Predictions", "🧪 Experiments", "🔍 Discoveries", "📤 Export"],
         label_visibility="collapsed",
     )
     st.divider()
@@ -1318,6 +1318,145 @@ elif page == "🔮 What-If":
                     "TSS estimates are approximations based on workout type and intensity. "
                     "Actual training load may vary. These are pattern-based projections, not medical advice."
                 )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PAGE 4b: ADAPTIVE TRAINING COACH
+# ══════════════════════════════════════════════════════════════════════════
+elif page == "🏋️ Coach":
+    st.header("Adaptive Training Coach")
+    st.caption(
+        "A periodized 7-day plan generated from your fitness (CTL), fatigue (ATL), "
+        "and readiness model — guardrails included, every day explained."
+    )
+
+    import time as _time
+
+    from insights_engine.coach import CoachConfig, TrainingCoach
+    from insights_engine.config import AWS_CONFIG
+    from insights_engine.insights.what_if import WhatIfSimulator
+    from insights_engine.viz.what_if_charts import multi_day_projection_chart
+
+    _WD_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+    # Share the What-If simulator cache (10-minute refresh)
+    _sim_stale = (
+        "whatif_simulator" not in st.session_state
+        or _time.time() - st.session_state.get("whatif_loaded_at", 0) > 600
+    )
+    if _sim_stale:
+        try:
+            with st.spinner("Loading your historical patterns..."):
+                _sim = WhatIfSimulator(get_athena())
+                _sim.load_historical_models()
+                st.session_state.whatif_simulator = _sim
+                st.session_state.whatif_loaded_at = _time.time()
+        except Exception as e:
+            st.error(f"Failed to load historical data: {e}")
+            st.stop()
+
+    coach = TrainingCoach(st.session_state.whatif_simulator)
+
+    # ── Controls ─────────────────────────────────────────────────────────
+    cc1, cc2 = st.columns([1, 2])
+    with cc1:
+        goal = st.radio(
+            "Goal for the week",
+            ["build", "maintain", "recover"],
+            format_func=lambda g: {"build": "🔺 Build fitness",
+                                   "maintain": "➡️ Maintain",
+                                   "recover": "🔻 Recovery week"}[g],
+        )
+        expected_sleep = st.slider("Expected sleep score", 60, 95, 80, 5)
+    with cc2:
+        train_days = st.multiselect(
+            "Training days available",
+            _WD_LABELS,
+            default=_WD_LABELS[:6],
+        )
+        disciplines = st.multiselect(
+            "Disciplines", ["cycling", "strength"], default=["cycling", "strength"],
+        )
+
+    if st.button("Generate plan", type="primary"):
+        cfg = CoachConfig(
+            goal=goal,
+            available_weekdays=[_WD_LABELS.index(d) for d in train_days],
+            disciplines=disciplines or ["cycling"],
+            expected_sleep=expected_sleep,
+        )
+        with st.spinner("Simulating candidate weeks..."):
+            st.session_state.coach_plan = coach.prescribe(cfg)
+
+    plan = st.session_state.get("coach_plan")
+    if plan:
+        # ── Summary metrics ──────────────────────────────────────────────
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Planned weekly TSS", f"{plan.weekly_tss:.0f}",
+                  f"target {plan.target_weekly_tss:.0f}", delta_color="off")
+        m2.metric("Fitness (CTL)", f"{plan.ending_ctl:.1f}",
+                  f"{plan.ending_ctl - plan.starting_ctl:+.1f} this week")
+        m3.metric("Form now (TSB)", f"{plan.starting_tsb:+.1f}")
+        m4.metric("Hard days", str(sum(1 for d in plan.days if d.intensity == "high")))
+
+        # ── The plan ─────────────────────────────────────────────────────
+        import pandas as _pd
+
+        def _session_label(d):
+            if d.intensity == "none":
+                return "Rest"
+            return f"{d.discipline.replace('_', ' + ').title()} — {d.intensity}"
+
+        plan_df = _pd.DataFrame([
+            {
+                "Day": f"{d.weekday} · {d.date_label}",
+                "Session": _session_label(d),
+                "Target TSS": int(d.target_tss),
+                "Predicted readiness": round(d.predicted_readiness),
+                "Projected TSB": d.projected_tsb,
+                "Why": d.why,
+            }
+            for d in plan.days
+        ])
+        st.dataframe(plan_df, width="stretch", hide_index=True)
+
+        # ── Projection chart (reuses the What-If multi-day chart) ────────
+        if plan.result and plan.result.projections:
+            st.plotly_chart(
+                multi_day_projection_chart(
+                    plan.result.projections, plan.result.baseline_readiness_7d
+                ),
+                width="stretch",
+            )
+
+        # ── Rationale + alternatives ─────────────────────────────────────
+        with st.expander("Why this plan?"):
+            for line in plan.rationale:
+                st.markdown(f"- {line}")
+            if plan.alternatives:
+                alts = ", ".join(
+                    f"{s} ({t:.0f} TSS, score {sc})" for s, t, sc in plan.alternatives
+                )
+                st.caption(f"Also simulated: {alts} — lower combined score.")
+
+        # ── Save for the morning briefing ────────────────────────────────
+        if st.button("📬 Save plan (include in morning briefings)"):
+            try:
+                local = str(PROJECT_ROOT / "reports_output" / "coach_plan.json") \
+                    if "PROJECT_ROOT" in dir() else "reports_output/coach_plan.json"
+                coach.save_plan(
+                    plan,
+                    s3_bucket=AWS_CONFIG["gold_bucket"],
+                    local_path=local,
+                )
+                st.success(
+                    "Plan saved — each morning briefing this week will include "
+                    "that day's prescribed session."
+                )
+            except Exception as e:
+                st.error(f"Could not save plan: {e}")
+    else:
+        st.info("Set your goal and availability, then hit **Generate plan**.")
 
 
 # ══════════════════════════════════════════════════════════════════════════
