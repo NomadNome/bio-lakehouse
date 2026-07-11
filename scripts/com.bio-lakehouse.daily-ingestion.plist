@@ -5,6 +5,10 @@
     <key>Label</key>
     <string>com.bio-lakehouse.daily-ingestion</string>
 
+    <!-- Don't kill children (Streamlit) when the pipeline job completes -->
+    <key>AbandonProcessGroup</key>
+    <true/>
+
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
