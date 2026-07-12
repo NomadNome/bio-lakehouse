@@ -29,6 +29,8 @@ ATHENA_RESULTS_BUCKET = os.environ.get("ATHENA_RESULTS_BUCKET", "")
 GOLD_BUCKET = os.environ.get("GOLD_BUCKET", "")
 ANTHROPIC_KEY_PARAM = os.environ.get("ANTHROPIC_KEY_PARAM", "")
 NARRATOR_MODEL = os.environ.get("NARRATOR_MODEL", "claude-sonnet-5")
+OURA_TOKEN_PARAM = os.environ.get("OURA_TOKEN_PARAM", "")
+OURA_INGEST_FUNCTION = os.environ.get("OURA_INGEST_FUNCTION", "")
 
 s3 = boto3.client("s3")
 
@@ -245,7 +247,7 @@ def build_briefing():
             if hrv is not None:
                 vitals.append(f"HRV {hrv:.0f}")
             vitals_str = f" ({', '.join(vitals)})" if vitals else ""
-            bullets.append(f"{' | '.join(parts)}{vitals_str}")
+            bullets.append(f"As of {latest_date}: {' | '.join(parts)}{vitals_str}")
 
     # Bullet 2: Energy state with dynamic context
     if energy_rows:
@@ -285,6 +287,95 @@ def build_briefing():
     return latest_date, bullets
 
 
+def _get_live_oura():
+    """Fetch this morning's readiness/sleep directly from the Oura API.
+
+    Gold data is only as fresh as the last pipeline run; the ring's morning
+    scores are usually in Oura's cloud before that. This overlay makes the
+    briefing current-as-of-this-morning regardless of pipeline timing.
+    Returns {"readiness": {...}, "sleep": {...}} for today, or None.
+    """
+    if not OURA_TOKEN_PARAM:
+        return None
+    try:
+        import urllib.request
+
+        token = boto3.client("ssm").get_parameter(
+            Name=OURA_TOKEN_PARAM, WithDecryption=True
+        )["Parameter"]["Value"]
+
+        today = date.today().isoformat()
+        out = {}
+        for dtype, endpoint in (("readiness", "daily_readiness"), ("sleep", "daily_sleep")):
+            url = (
+                f"https://api.ouraring.com/v2/usercollection/{endpoint}"
+                f"?start_date={today}&end_date={today}"
+            )
+            req = urllib.request.Request(url)
+            req.add_header("Authorization", f"Bearer {token}")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            recs = [r for r in data.get("data", []) if r.get("day") == today]
+            if recs:
+                out[dtype] = recs[0]
+        return out or None
+    except Exception as e:
+        print(f"Live Oura fetch failed (falling back to Gold data): {e}")
+        return None
+
+
+def _trigger_oura_ingest(day_str):
+    """Fire-and-forget: land today's Oura data in Bronze so Gold catches up."""
+    if not OURA_INGEST_FUNCTION:
+        return
+    try:
+        boto3.client("lambda").invoke(
+            FunctionName=OURA_INGEST_FUNCTION,
+            InvocationType="Event",
+            Payload=json.dumps({"date": day_str}).encode("utf-8"),
+        )
+        print(f"Triggered async Oura ingest for {day_str}")
+    except Exception as e:
+        print(f"Could not trigger Oura ingest: {e}")
+
+
+def apply_live_overlay(latest_date, bullets):
+    """Prepend this morning's live Oura readings; label Gold data by its date.
+
+    Returns (data_date, bullets): data_date is what the narrative should treat
+    as 'current' — today when the live fetch succeeds, else the Gold date.
+    """
+    today_str = date.today().isoformat()
+    live = _get_live_oura()
+
+    if not live:
+        if latest_date != today_str:
+            bullets.insert(
+                0,
+                f"Ring not synced yet this morning — the numbers below describe "
+                f"{latest_date}, not today.",
+            )
+        return latest_date, bullets
+
+    r = live.get("readiness", {})
+    s = live.get("sleep", {})
+    parts = []
+    if r.get("score") is not None:
+        parts.append(f"Readiness {r['score']}")
+    if s.get("score") is not None:
+        parts.append(f"Sleep {s['score']}")
+    temp = r.get("temperature_deviation")
+    if isinstance(temp, (int, float)):
+        parts.append(f"temp deviation {temp:+.2f}C")
+    if not parts:
+        return latest_date, bullets
+
+    bullets.insert(0, f"THIS MORNING (live, {today_str}): {' | '.join(parts)}")
+    if latest_date != today_str:
+        _trigger_oura_ingest(today_str)
+    return today_str, bullets
+
+
 def _get_coach_session():
     """Read today's prescribed session from the saved Coach plan on S3."""
     if not GOLD_BUCKET:
@@ -314,7 +405,7 @@ def _get_coach_session():
     return None
 
 
-def narrate_briefing(latest_date, bullets):
+def narrate_briefing(data_date, bullets):
     """Turn the data bullets into a short coach-style narrative via Claude.
 
     Returns None on any failure — the briefing always falls back to the
@@ -324,16 +415,29 @@ def narrate_briefing(latest_date, bullets):
     if client is None or not bullets:
         return None
 
+    today_str = date.today().isoformat()
     facts = "\n".join(f"- {b}" for b in bullets)
+    freshness = (
+        "The live morning readings and the pipeline data are both current."
+        if data_date == today_str
+        else (
+            f"IMPORTANT: the pipeline data describes {data_date}, not today. "
+            "Frame those numbers as what happened then — never present them "
+            "as this morning's state."
+        )
+    )
     prompt = (
-        f"Here are today's health metrics and context for {latest_date}:\n\n"
+        f"Today is {today_str}. Here are the health metrics and context:\n\n"
         f"{facts}\n\n"
+        f"Data freshness: {freshness} Bullets marked 'THIS MORNING (live...)' "
+        "are real-time readings from the ring and always describe today.\n\n"
         "Write a morning briefing of 3-5 sentences in plain text (no markdown, "
         "no headers, no emoji). Lead with the single most important thing about "
-        "today. Use only the numbers provided — do not invent any. If a "
-        "prescribed training session is listed, weave it in as today's plan. "
-        "End with one concrete, actionable sentence. Sound like a calm, "
-        "knowledgeable coach, not a cheerleader."
+        "today. Use only the numbers provided — do not invent any, and be "
+        "explicit about which day any number belongs to. If a prescribed "
+        "training session is listed, weave it in as today's plan. End with one "
+        "concrete, actionable sentence. Sound like a calm, knowledgeable "
+        "coach, not a cheerleader."
     )
 
     try:
@@ -455,7 +559,11 @@ def lambda_handler(event, context):
 
         if bullets:
             is_stale = any("DATA STALE" in b for b in bullets)
-            narrative = None if is_stale else narrate_briefing(latest_date, bullets)
+            if is_stale:
+                narrative = None
+            else:
+                data_date, bullets = apply_live_overlay(latest_date, bullets)
+                narrative = narrate_briefing(data_date, bullets)
             if narrative:
                 print(f"Narrative generated ({len(narrative)} chars)")
             publish_briefing(latest_date, bullets, narrative)

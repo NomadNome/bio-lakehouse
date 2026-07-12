@@ -94,11 +94,18 @@ Resources:
                 Action:
                   - 'sns:Publish'
                 Resource: !Ref MorningBriefingTopic
-              # SSM SecureString read (Anthropic API key for narration)
+              # SSM SecureString reads (Anthropic key for narration, Oura token for live overlay)
               - Effect: Allow
                 Action:
                   - 'ssm:GetParameter'
-                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/bio-lakehouse/anthropic-api-key'
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/bio-lakehouse/anthropic-api-key'
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/bio-lakehouse/oura-api-token'
+              # Async catch-up ingest of today's Oura data
+              - Effect: Allow
+                Action:
+                  - 'lambda:InvokeFunction'
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectPrefix}-oura-api-ingest'
       Tags:
         - Key: Project
           Value: !Ref ProjectPrefix
@@ -126,6 +133,8 @@ Resources:
           GOLD_BUCKET: !Sub '${ProjectPrefix}-gold-${AWS::AccountId}'
           ANTHROPIC_KEY_PARAM: '/bio-lakehouse/anthropic-api-key'
           NARRATOR_MODEL: 'claude-sonnet-5'
+          OURA_TOKEN_PARAM: '/bio-lakehouse/oura-api-token'
+          OURA_INGEST_FUNCTION: !Sub '${ProjectPrefix}-oura-api-ingest'
       Tags:
         - Key: Project
           Value: !Ref ProjectPrefix
