@@ -19,6 +19,14 @@ Parameters:
     Type: String
     Default: KnownasNoma_
     Description: Filename prefix of the user's Peloton exports (<username>_)
+  EnableFailureAlerts:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Wire Glue failure alerts to the <prefix>-health-alerts SNS topic (requires the alerts stack)
+
+Conditions:
+  FailureAlertsEnabled: !Equals [!Ref EnableFailureAlerts, 'true']
 
 Resources:
   # -------------------------------------------------------
@@ -233,6 +241,7 @@ Resources:
   # -------------------------------------------------------
   GlueJobFailureRule:
     Type: AWS::Events::Rule
+    Condition: FailureAlertsEnabled
     Properties:
       Name: !Sub '${ProjectPrefix}-glue-failure-alerts'
       EventPattern:
@@ -262,6 +271,7 @@ Resources:
 
   GlueFailureSNSTopicPolicy:
     Type: AWS::SNS::TopicPolicy
+    Condition: FailureAlertsEnabled
     Properties:
       Topics:
         - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${ProjectPrefix}-health-alerts'

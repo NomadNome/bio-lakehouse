@@ -62,3 +62,8 @@ lambda/**/*.zip
 
 # Ingestion inbox (raw exports, never commit)
 inbox/
+
+# Per-instance env files (may hold personal settings)
+.env.*
+!.env.example
+!.env.oura.example
