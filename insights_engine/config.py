@@ -15,6 +15,7 @@ load_dotenv(_project_root / ".env")
 # AWS Configuration
 AWS_CONFIG = {
     "athena_database": os.environ.get("BIO_ATHENA_DATABASE", "bio_gold"),
+    "athena_silver_database": os.environ.get("BIO_ATHENA_SILVER_DATABASE", "bio_silver"),
     "athena_results_bucket": os.environ.get("BIO_ATHENA_RESULTS_BUCKET", ""),
     "gold_bucket": os.environ.get("BIO_S3_GOLD_BUCKET", ""),
     "aws_region": os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
@@ -149,3 +150,8 @@ GOLD_VIEWS = [
     "overtraining_risk",
     "training_load_daily",
 ]
+
+# Fully-qualified database names for SQL construction (multi-instance support:
+# a second user's instance points these at e.g. bio_diego_gold via env)
+GOLD_DB = AWS_CONFIG["athena_database"]
+SILVER_DB = AWS_CONFIG["athena_silver_database"]

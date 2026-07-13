@@ -16,6 +16,7 @@ from scipy import stats
 
 from insights_engine.insights.base import DateRange, InsightAnalyzer, InsightResult
 from insights_engine.viz import theme
+from insights_engine.config import GOLD_DB
 
 
 _BUCKET_LABELS = ["Rest", "Light", "Moderate", "Hard", "Max"]
@@ -27,7 +28,7 @@ class TimingCorrelationAnalyzer(InsightAnalyzer):
 
     def analyze(self, date_range: DateRange | None = None) -> InsightResult:
         try:
-            sql = """
+            sql = f"""
             SELECT
                 d.date,
                 d.readiness_score,
@@ -35,8 +36,8 @@ class TimingCorrelationAnalyzer(InsightAnalyzer):
                 d.disciplines,
                 d.had_workout,
                 b.readiness_score AS next_day_readiness
-            FROM bio_gold.daily_readiness_performance d
-            JOIN bio_gold.daily_readiness_performance b
+            FROM {GOLD_DB}.daily_readiness_performance d
+            JOIN {GOLD_DB}.daily_readiness_performance b
                 ON TRY(CAST(b.date AS date))
                  = date_add('day', 1, TRY(CAST(d.date AS date)))
             WHERE d.had_workout = true

@@ -3,7 +3,8 @@ version: 2
 sources:
   - name: bio_silver
     database: awsdatacatalog
-    schema: bio_silver
+    # Per-instance Silver database; default preserves the original setup
+    schema: "{{ env_var('BIO_ATHENA_SILVER_DATABASE', 'bio_silver') }}"
     description: Silver layer — normalized, deduplicated, partitioned data from Glue ETL
     tables:
       - name: oura_daily_readiness

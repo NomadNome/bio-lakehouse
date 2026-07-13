@@ -15,15 +15,16 @@ from scipy import stats
 from insights_engine.core.athena_client import AthenaClient
 from insights_engine.insights.base import DateRange, InsightAnalyzer, InsightResult
 from insights_engine.viz import theme
+from insights_engine.config import GOLD_DB
 
 
 class ReadinessTrendAnalyzer(InsightAnalyzer):
     """Tracks readiness trend with rolling averages and direction indicator."""
 
     def analyze(self, date_range: DateRange | None = None) -> InsightResult:
-        sql = """
+        sql = f"""
         SELECT date, readiness_score, sleep_score, readiness_7day_avg, sleep_7day_avg
-        FROM bio_gold.dashboard_30day
+        FROM {GOLD_DB}.dashboard_30day
         WHERE readiness_score IS NOT NULL
         ORDER BY date
         """

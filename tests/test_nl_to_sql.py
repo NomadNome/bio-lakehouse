@@ -126,7 +126,9 @@ class TestPromptFiles:
         assert path.exists()
         content = path.read_text()
         assert "{schema_ddl}" in content
-        assert "bio_gold" in content
+        # database is a placeholder hydrated per-instance (multi-user support)
+        assert "{database}" in content
+        assert "bio_gold" not in content
 
     def test_examples_file_exists_and_has_questions(self):
         path = PROMPTS_DIR / "nl_to_sql_examples.txt"

@@ -16,6 +16,7 @@ from datetime import date, datetime
 import pandas as pd
 
 from insights_engine.core.athena_client import AthenaClient
+from insights_engine.config import GOLD_DB
 
 
 # -------------------------------------------------------
@@ -167,7 +168,7 @@ class FHIRBundleBuilder:
             vo2_max,
             weight_lbs,
             blood_oxygen_pct
-        FROM bio_gold.daily_readiness_performance
+        FROM {GOLD_DB}.daily_readiness_performance
         WHERE COALESCE(
                 TRY(CAST(date AS date)),
                 TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))

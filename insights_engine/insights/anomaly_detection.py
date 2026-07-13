@@ -14,17 +14,18 @@ import plotly.graph_objects as go
 from insights_engine.core.athena_client import AthenaClient
 from insights_engine.insights.base import DateRange, InsightAnalyzer, InsightResult
 from insights_engine.viz import theme
+from insights_engine.config import GOLD_DB
 
 
 class AnomalyDetectionAnalyzer(InsightAnalyzer):
     """Detects readiness anomalies and missed workout streaks."""
 
     def analyze(self, date_range: DateRange | None = None) -> InsightResult:
-        sql = """
+        sql = f"""
         SELECT
             date, readiness_score, sleep_score, had_workout,
             combined_wellness_score, disciplines
-        FROM bio_gold.dashboard_30day
+        FROM {GOLD_DB}.dashboard_30day
         WHERE readiness_score IS NOT NULL
         ORDER BY date
         """

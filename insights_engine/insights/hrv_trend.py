@@ -16,15 +16,16 @@ import plotly.graph_objects as go
 
 from insights_engine.insights.base import DateRange, InsightAnalyzer, InsightResult
 from insights_engine.viz import theme
+from insights_engine.config import GOLD_DB
 
 
 class HRVTrendAnalyzer(InsightAnalyzer):
     """Tracks HRV trends and flags suppressed recovery periods."""
 
     def analyze(self, date_range: DateRange | None = None) -> InsightResult:
-        sql = """
+        sql = f"""
         SELECT date, hrv_ms, readiness_score
-        FROM bio_gold.daily_readiness_performance
+        FROM {GOLD_DB}.daily_readiness_performance
         WHERE hrv_ms IS NOT NULL
         ORDER BY date
         """

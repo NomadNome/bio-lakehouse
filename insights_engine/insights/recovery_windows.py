@@ -15,13 +15,14 @@ import plotly.graph_objects as go
 from insights_engine.core.athena_client import AthenaClient
 from insights_engine.insights.base import DateRange, InsightAnalyzer, InsightResult
 from insights_engine.viz import theme
+from insights_engine.config import GOLD_DB
 
 
 class RecoveryWindowAnalyzer(InsightAnalyzer):
     """Estimates recovery duration by workout intensity."""
 
     def analyze(self, date_range: DateRange | None = None) -> InsightResult:
-        sql = """
+        sql = f"""
         SELECT
             workout_date,
             workout_day_readiness,
@@ -40,7 +41,7 @@ class RecoveryWindowAnalyzer(InsightAnalyzer):
             readiness_delta_d2,
             readiness_delta_d3,
             days_to_recover
-        FROM bio_gold.workout_recovery_windows
+        FROM {GOLD_DB}.workout_recovery_windows
         ORDER BY workout_date
         """
         df = self.athena.execute_query(sql)

@@ -9,13 +9,14 @@ Multi-page app with:
 
 from __future__ import annotations
 
+import os
 import time
 from datetime import date, timedelta
 
 import streamlit as st
 import pandas as pd
 
-from insights_engine.config import CHART_CONFIG
+from insights_engine.config import CHART_CONFIG, GOLD_DB
 from insights_engine.core.athena_client import AthenaClient
 from insights_engine.core.nl_to_sql import NLToSQLEngine
 
@@ -118,12 +119,12 @@ with st.sidebar:
         for k in stale_keys:
             athena._query_cache.pop(k, None)
 
-        metrics_df = athena.execute_query("""
+        metrics_df = athena.execute_query(f"""
             SELECT
                 ROUND(AVG(readiness_score), 0) AS readiness,
                 ROUND(AVG(sleep_score), 0) AS sleep,
                 SUM(CASE WHEN had_workout THEN 1 ELSE 0 END) AS workouts
-            FROM bio_gold.dashboard_30day
+            FROM {GOLD_DB}.dashboard_30day
             WHERE COALESCE(
                     TRY(CAST(date AS date)),
                     TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
@@ -139,12 +140,12 @@ with st.sidebar:
 
     # HealthKit vitals summary
     try:
-        hk_df = athena.execute_query("""
+        hk_df = athena.execute_query(f"""
             SELECT
                 ROUND(AVG(resting_heart_rate_bpm), 0) AS avg_rhr,
                 ROUND(AVG(hrv_ms), 0) AS avg_hrv,
                 ROUND(AVG(vo2_max), 1) AS avg_vo2
-            FROM bio_gold.daily_readiness_performance
+            FROM {GOLD_DB}.daily_readiness_performance
             WHERE resting_heart_rate_bpm IS NOT NULL
               AND COALESCE(
                     TRY(CAST(date AS date)),
@@ -165,11 +166,11 @@ with st.sidebar:
 
     # Nutrition summary (if MFP data exists)
     try:
-        nutr_df = athena.execute_query("""
+        nutr_df = athena.execute_query(f"""
             SELECT
                 ROUND(AVG(daily_calories), 0) AS avg_cal,
                 ROUND(AVG(protein_g), 0) AS avg_protein
-            FROM bio_gold.daily_readiness_performance
+            FROM {GOLD_DB}.daily_readiness_performance
             WHERE daily_calories IS NOT NULL
               AND COALESCE(
                     TRY(CAST(date AS date)),
@@ -188,13 +189,13 @@ with st.sidebar:
 
     # Data freshness indicator
     try:
-        freshness_df = athena.execute_query("""
+        freshness_df = athena.execute_query(f"""
             SELECT
                 MAX(COALESCE(
                     TRY(CAST(date AS date)),
                     TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
                 )) AS latest_date
-            FROM bio_gold.dashboard_30day
+            FROM {GOLD_DB}.dashboard_30day
         """)
         if not freshness_df.empty and freshness_df.iloc[0]["latest_date"] is not None:
             import pandas as _pd
@@ -498,7 +499,7 @@ elif page == "📊 Insights":
     @st.cache_data(ttl=600, show_spinner="Loading HealthKit vitals...")
     def load_hk_vitals():
         _athena = get_athena()
-        return _athena.execute_query("""
+        return _athena.execute_query(f"""
             SELECT
                 date,
                 resting_heart_rate_bpm,
@@ -508,7 +509,7 @@ elif page == "📊 Insights":
                 weight_lbs,
                 readiness_score,
                 sleep_score
-            FROM bio_gold.daily_readiness_performance
+            FROM {GOLD_DB}.daily_readiness_performance
             WHERE resting_heart_rate_bpm IS NOT NULL
               AND COALESCE(
                     TRY(CAST(date AS date)),
@@ -592,9 +593,9 @@ elif page == "📊 Insights":
         @st.cache_data(ttl=600, show_spinner="Loading body composition...")
         def load_body_comp():
             _athena = get_athena()
-            return _athena.execute_query("""
+            return _athena.execute_query(f"""
                 SELECT date, weight_lbs, body_fat_pct, bmi, lean_body_mass_lbs
-                FROM bio_gold.daily_readiness_performance
+                FROM {GOLD_DB}.daily_readiness_performance
                 WHERE COALESCE(TRY(CAST(date AS date)), TRY(date_parse(date, '%Y-%m-%d %H:%i:%s')))
                       >= DATE '2026-02-20'
                   AND (weight_lbs IS NOT NULL OR body_fat_pct IS NOT NULL)
@@ -610,7 +611,13 @@ elif page == "📊 Insights":
 
             st.divider()
             st.subheader("Apple Health — Body Composition")
-            st.caption("Baseline: Hume Health pod (Feb 20, 2026). Earlier data excluded due to dual-scale calibration on 2/19.")
+            # Instance-specific calibration note (set BIO_BODYCOMP_NOTE in .env; empty = hidden)
+            _bodycomp_note = os.environ.get(
+                "BIO_BODYCOMP_NOTE",
+                "Baseline: Hume Health pod (Feb 20, 2026). Earlier data excluded due to dual-scale calibration on 2/19.",
+            )
+            if _bodycomp_note:
+                st.caption(_bodycomp_note)
 
             # ── Summary metrics with deltas ──
             def _first_last(series):
@@ -782,9 +789,9 @@ elif page == "📊 Insights":
     @st.cache_data(ttl=600, show_spinner="Loading sleep debt data...")
     def load_sleep_debt():
         _athena = get_athena()
-        return _athena.execute_query("""
+        return _athena.execute_query(f"""
             SELECT date, sleep_score, sleep_baseline_14d, sleep_deficit_daily, sleep_debt_7d
-            FROM bio_gold.feature_readiness_daily
+            FROM {GOLD_DB}.feature_readiness_daily
             WHERE sleep_baseline_14d IS NOT NULL
             ORDER BY date
         """)
@@ -861,9 +868,9 @@ elif page == "📊 Insights":
     @st.cache_data(ttl=600, show_spinner="Loading HRV velocity data...")
     def load_hrv_velocity():
         _athena = get_athena()
-        return _athena.execute_query("""
+        return _athena.execute_query(f"""
             SELECT date, hrv_ms, hrv_2day_change, hrv_velocity_flag
-            FROM bio_gold.feature_readiness_daily
+            FROM {GOLD_DB}.feature_readiness_daily
             WHERE hrv_2day_change IS NOT NULL
             ORDER BY date
         """)
@@ -1471,7 +1478,9 @@ elif page == "🎯 Predictions":
     from pathlib import Path
     import json
 
-    model_dir = Path(__file__).resolve().parent.parent / "models" / "readiness_predictor"
+    # Per-instance model store (each user trains on their own data)
+    _models_root = os.environ.get("BIO_MODEL_DIR", "models")
+    model_dir = Path(__file__).resolve().parent.parent / _models_root / "readiness_predictor"
     model_path = model_dir / "model.joblib"
     metrics_path = model_dir / "metrics.json"
     backtest_path = model_dir / "backtest.csv"

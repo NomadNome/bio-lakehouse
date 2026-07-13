@@ -11,6 +11,10 @@ Parameters:
   ProjectPrefix:
     Type: String
     Default: bio-lakehouse
+  GoldDatabaseName:
+    Type: String
+    Default: bio_gold
+    Description: Glue database for the Gold layer (per-instance)
   AlertSnsTopicArn:
     Type: String
     Description: ARN of the existing SNS topic for health alerts
@@ -93,7 +97,7 @@ Resources:
       Environment:
         Variables:
           SNS_TOPIC_ARN: !Ref AlertSnsTopicArn
-          ATHENA_DATABASE: bio_gold
+          ATHENA_DATABASE: !Ref GoldDatabaseName
           ATHENA_RESULTS_BUCKET: !Sub '${ProjectPrefix}-athena-results-${AWS::AccountId}'
       Tags:
         - Key: Project

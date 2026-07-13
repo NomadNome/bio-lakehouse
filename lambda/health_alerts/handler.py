@@ -80,13 +80,13 @@ def check_alerts():
     alerts = []
 
     # Query 1: Latest metrics + 30-day baselines (mean, stddev)
-    baseline_sql = """
+    baseline_sql = f"""
     SELECT
         AVG(resting_heart_rate_bpm) AS rhr_mean,
         STDDEV(resting_heart_rate_bpm) AS rhr_std,
         AVG(hrv_ms) AS hrv_mean,
         STDDEV(hrv_ms) AS hrv_std
-    FROM bio_gold.daily_readiness_performance
+    FROM {ATHENA_DATABASE}.daily_readiness_performance
     WHERE resting_heart_rate_bpm IS NOT NULL
       AND COALESCE(
             TRY(CAST(date AS date)),
@@ -94,30 +94,30 @@ def check_alerts():
           ) >= CURRENT_DATE - INTERVAL '30' DAY
     """
 
-    latest_sql = """
+    latest_sql = f"""
     SELECT
         date,
         resting_heart_rate_bpm,
         hrv_ms,
         readiness_score
-    FROM bio_gold.daily_readiness_performance
+    FROM {ATHENA_DATABASE}.daily_readiness_performance
     WHERE resting_heart_rate_bpm IS NOT NULL
     ORDER BY date DESC
     LIMIT 1
     """
 
     # Query 2: Overtraining risk
-    overtraining_sql = """
+    overtraining_sql = f"""
     SELECT date, overtraining_risk
-    FROM bio_gold.overtraining_risk
+    FROM {ATHENA_DATABASE}.overtraining_risk
     ORDER BY date DESC
     LIMIT 1
     """
 
     # Query 3: Readiness trend (last 3 days)
-    readiness_trend_sql = """
+    readiness_trend_sql = f"""
     SELECT date, readiness_score
-    FROM bio_gold.daily_readiness_performance
+    FROM {ATHENA_DATABASE}.daily_readiness_performance
     WHERE readiness_score IS NOT NULL
     ORDER BY date DESC
     LIMIT 3

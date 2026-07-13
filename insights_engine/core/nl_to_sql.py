@@ -70,17 +70,23 @@ class NLToSQLEngine:
         return self._client
 
     def _load_system_prompt(self) -> str:
-        """Load and hydrate the system prompt with live schema DDL."""
+        """Load and hydrate the system prompt with live schema DDL + database."""
         if self._system_prompt is None:
             template = (PROMPTS_DIR / "nl_to_sql_system.txt").read_text()
             schema_ddl = self.athena.get_schema_ddl()
-            self._system_prompt = template.replace("{schema_ddl}", schema_ddl)
+            self._system_prompt = template.replace(
+                "{schema_ddl}", schema_ddl
+            ).replace("{database}", self.athena.database)
         return self._system_prompt
 
     def _load_examples(self) -> str:
-        """Load few-shot examples."""
+        """Load few-shot examples, hydrated with the instance's database name."""
         if self._examples is None:
-            self._examples = (PROMPTS_DIR / "nl_to_sql_examples.txt").read_text()
+            self._examples = (
+                (PROMPTS_DIR / "nl_to_sql_examples.txt")
+                .read_text()
+                .replace("{database}", self.athena.database)
+            )
         return self._examples
 
     def translate(

@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 
 from insights_engine.insights.base import DateRange, InsightAnalyzer, InsightResult
 from insights_engine.viz import theme
+from insights_engine.config import GOLD_DB
 
 FOCUS_FACTORS = {
     "deep_sleep": "Deep Sleep",
@@ -24,9 +25,9 @@ class SleepArchitectureAnalyzer(InsightAnalyzer):
     """Tracks deep sleep and REM sleep contributor scores over time."""
 
     def analyze(self, date_range: DateRange | None = None) -> InsightResult:
-        sql = """
+        sql = f"""
         SELECT day, sleep_score, deep_sleep, rem_sleep
-        FROM bio_gold.sleep_architecture
+        FROM {GOLD_DB}.sleep_architecture
         ORDER BY day
         """
         df = self.athena.execute_query(sql)

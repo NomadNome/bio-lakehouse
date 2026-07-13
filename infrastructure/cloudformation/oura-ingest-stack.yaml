@@ -19,12 +19,12 @@ Resources:
   OuraApiTokenParam:
     Type: AWS::SSM::Parameter
     Properties:
-      Name: /bio-lakehouse/oura-api-token
+      Name: !Sub '/${ProjectPrefix}/oura-api-token'
       Type: String
       Value: REPLACE_WITH_OURA_PAT
       Description: >
         Oura Personal Access Token. After stack deployment, update with:
-        aws ssm put-parameter --name /bio-lakehouse/oura-api-token
+        aws ssm put-parameter --name /<project-prefix>/oura-api-token
         --type SecureString --value "YOUR_TOKEN" --overwrite
 
   # -------------------------------------------------------
@@ -57,7 +57,7 @@ Resources:
                 Effect: Allow
                 Action:
                   - 'ssm:GetParameter'
-                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/bio-lakehouse/oura-api-token'
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectPrefix}/oura-api-token'
 
   # -------------------------------------------------------
   # Lambda Function

@@ -18,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 from jinja2 import Environment, FileSystemLoader
 
-from insights_engine.config import CHART_CONFIG, CLAUDE_CONFIG
+from insights_engine.config import CHART_CONFIG, CLAUDE_CONFIG, GOLD_DB
 from insights_engine.core.athena_client import AthenaClient
 from insights_engine.insights.base import DateRange, InsightResult
 from insights_engine.insights.sleep_readiness import SleepReadinessAnalyzer
@@ -206,12 +206,12 @@ class WeeklyReportGenerator:
     def _check_staleness(self) -> str | None:
         """Check if the most recent data is older than 3 days."""
         try:
-            df = self.athena.execute_query("""
+            df = self.athena.execute_query(f"""
                 SELECT MAX(COALESCE(
                     TRY(CAST(date AS date)),
                     TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
                 )) AS latest_date
-                FROM bio_gold.dashboard_30day
+                FROM {GOLD_DB}.dashboard_30day
             """)
             if df.empty:
                 return "No data found in dashboard_30day."
@@ -243,7 +243,7 @@ class WeeklyReportGenerator:
             ROUND(AVG(carbs_g), 0) AS avg_carbs,
             ROUND(AVG(fat_g), 0) AS avg_fat,
             SUM(CASE WHEN daily_calories IS NOT NULL THEN 1 ELSE 0 END) AS nutrition_days
-        FROM bio_gold.daily_readiness_performance
+        FROM {GOLD_DB}.daily_readiness_performance
         WHERE COALESCE(
                 TRY(CAST(date AS date)),
                 TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
@@ -333,7 +333,7 @@ class WeeklyReportGenerator:
             COALESCE(protein_g, 0) AS protein_g,
             COALESCE(carbs_g, 0) AS carbs_g,
             COALESCE(fat_g, 0) AS fat_g
-        FROM bio_gold.daily_readiness_performance
+        FROM {GOLD_DB}.daily_readiness_performance
         WHERE COALESCE(TRY(CAST(date AS date)), TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))) BETWEEN DATE '{week_start}' AND DATE '{week_end}'
         ORDER BY date
         """

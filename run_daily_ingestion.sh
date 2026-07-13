@@ -8,11 +8,25 @@ set -euo pipefail
 
 export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
 
-AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}"
-BUCKET="bio-lakehouse-bronze-${AWS_ACCOUNT_ID}"
-REGION="us-east-1"
 PROJECT_DIR="$HOME/Projects/bio-lakehouse"
 VENV="$HOME/.local/share/bio-lakehouse-venv"
+
+# ── Instance configuration ─────────────────────────────────────────────
+# Default = the primary instance (.env). A second instance runs the same
+# script with ENV_FILE=.env.<name> pointing at its own prefix/bucket/DBs.
+ENV_FILE="${ENV_FILE:-$PROJECT_DIR/.env}"
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    source "$ENV_FILE"
+    set +a
+fi
+BIO_PREFIX="${BIO_PREFIX:-bio-lakehouse}"
+GOLD_DB="${BIO_ATHENA_DATABASE:-bio_gold}"
+PELOTON_EXPORT_PREFIX="${PELOTON_EXPORT_PREFIX:-KnownasNoma_}"
+
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}"
+BUCKET="${BIO_PREFIX}-bronze-${AWS_ACCOUNT_ID}"
+REGION="us-east-1"
 BATCH_DATE=$(date +%Y-%m-%d)
 TODAY=$(date +%Y-%m-%d)
 YESTERDAY=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d "yesterday" +%Y-%m-%d)
@@ -30,7 +44,7 @@ echo "========================================"
 echo ""
 echo "--- Step 1: Find Latest Files ---"
 
-INBOX="$PROJECT_DIR/inbox"
+INBOX="${BIO_INBOX_DIR:-$PROJECT_DIR/inbox}"
 
 # Pick the newest file across inbox AND Downloads (whichever is fresher wins)
 pick_newest() {
@@ -39,7 +53,7 @@ pick_newest() {
 }
 
 HK_ZIP=$(pick_newest "export*.zip")
-PELO_CSV=$(pick_newest "KnownasNoma_workouts*.csv")
+PELO_CSV=$(pick_newest "${PELOTON_EXPORT_PREFIX}workouts*.csv")
 MFP_CSV=$(pick_newest "Nutrition-Summary*.csv" || true)
 
 if [ -z "$HK_ZIP" ]; then
@@ -231,29 +245,29 @@ start_or_attach() {
     echo "$run_id"
 }
 
-OURA_RUN=$(start_or_attach bio-lakehouse-oura-normalizer \
-    --arguments '{"--source_bucket":"bio-lakehouse-bronze-'"${AWS_ACCOUNT_ID}"'","--source_type":"oura"}')
+OURA_RUN=$(start_or_attach "${BIO_PREFIX}-oura-normalizer" \
+    --arguments '{"--source_bucket":"'"${BUCKET}"'","--source_type":"oura"}')
 
-HK_RUN=$(start_or_attach bio-lakehouse-healthkit-normalizer \
-    --arguments '{"--source_bucket":"bio-lakehouse-bronze-'"${AWS_ACCOUNT_ID}"'","--source_type":"healthkit"}')
+HK_RUN=$(start_or_attach "${BIO_PREFIX}-healthkit-normalizer" \
+    --arguments '{"--source_bucket":"'"${BUCKET}"'","--source_type":"healthkit"}')
 
-PELO_RUN=$(start_or_attach bio-lakehouse-peloton-normalizer \
-    --arguments '{"--source_bucket":"bio-lakehouse-bronze-'"${AWS_ACCOUNT_ID}"'","--source_type":"peloton"}')
+PELO_RUN=$(start_or_attach "${BIO_PREFIX}-peloton-normalizer" \
+    --arguments '{"--source_bucket":"'"${BUCKET}"'","--source_type":"peloton"}')
 
-MFP_RUN=$(start_or_attach bio-lakehouse-mfp-normalizer \
-    --arguments '{"--bronze_bucket":"bio-lakehouse-bronze-'"${AWS_ACCOUNT_ID}"'","--silver_bucket":"bio-lakehouse-silver-'"${AWS_ACCOUNT_ID}"'"}')
+MFP_RUN=$(start_or_attach "${BIO_PREFIX}-mfp-normalizer" \
+    --arguments '{"--bronze_bucket":"'"${BUCKET}"'","--silver_bucket":"'"${BIO_PREFIX}"'-silver-'"${AWS_ACCOUNT_ID}"'"}')
 
 echo "  Started/attached: Oura=$OURA_RUN  HK=$HK_RUN  Peloton=$PELO_RUN  MFP=$MFP_RUN"
 echo "  Polling (expect ~13 min for HealthKit)..."
 
 while true; do
-    OURA=$(aws glue get-job-run --job-name bio-lakehouse-oura-normalizer --run-id "$OURA_RUN" \
+    OURA=$(aws glue get-job-run --job-name "${BIO_PREFIX}-oura-normalizer" --run-id "$OURA_RUN" \
         --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
-    HK=$(aws glue get-job-run --job-name bio-lakehouse-healthkit-normalizer --run-id "$HK_RUN" \
+    HK=$(aws glue get-job-run --job-name "${BIO_PREFIX}-healthkit-normalizer" --run-id "$HK_RUN" \
         --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
-    PELO=$(aws glue get-job-run --job-name bio-lakehouse-peloton-normalizer --run-id "$PELO_RUN" \
+    PELO=$(aws glue get-job-run --job-name "${BIO_PREFIX}-peloton-normalizer" --run-id "$PELO_RUN" \
         --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
-    MFP=$(aws glue get-job-run --job-name bio-lakehouse-mfp-normalizer --run-id "$MFP_RUN" \
+    MFP=$(aws glue get-job-run --job-name "${BIO_PREFIX}-mfp-normalizer" --run-id "$MFP_RUN" \
         --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
     echo "  $(date +%H:%M:%S) Oura=$OURA  HK=$HK  Peloton=$PELO  MFP=$MFP"
 
@@ -283,11 +297,11 @@ echo "  All normalizers SUCCEEDED!"
 echo ""
 echo "--- Step 6: Silver Crawler ---"
 
-aws glue start-crawler --name bio-lakehouse-silver-crawler --region "$REGION"
+aws glue start-crawler --name "${BIO_PREFIX}-silver-crawler" --region "$REGION"
 echo "  Started silver crawler..."
 
 while true; do
-    STATE=$(aws glue get-crawler --name bio-lakehouse-silver-crawler --region "$REGION" \
+    STATE=$(aws glue get-crawler --name "${BIO_PREFIX}-silver-crawler" --region "$REGION" \
         --query 'Crawler.State' --output text | head -1)
     echo "  $(date +%H:%M:%S) Silver crawler: $STATE"
     if [ "$STATE" = "READY" ]; then break; fi
@@ -302,13 +316,13 @@ echo "  Silver crawler complete!"
 echo ""
 echo "--- Step 7: Gold Refresh ---"
 
-GOLD_RUN=$(aws glue start-job-run --job-name bio-lakehouse-dbt-gold-refresh --region "$REGION" \
+GOLD_RUN=$(aws glue start-job-run --job-name "${BIO_PREFIX}-dbt-gold-refresh" --region "$REGION" \
     --query 'JobRunId' --output text)
 
 echo "  Started gold refresh: $GOLD_RUN"
 
 while true; do
-    STATE=$(aws glue get-job-run --job-name bio-lakehouse-dbt-gold-refresh --run-id "$GOLD_RUN" \
+    STATE=$(aws glue get-job-run --job-name "${BIO_PREFIX}-dbt-gold-refresh" --run-id "$GOLD_RUN" \
         --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
     echo "  $(date +%H:%M:%S) Gold refresh: $STATE"
     case "$STATE" in
@@ -330,11 +344,11 @@ echo "  Gold refresh SUCCEEDED!"
 echo ""
 echo "--- Step 8: Gold Crawler ---"
 
-aws glue start-crawler --name bio-lakehouse-gold-crawler --region "$REGION"
+aws glue start-crawler --name "${BIO_PREFIX}-gold-crawler" --region "$REGION"
 echo "  Started gold crawler..."
 
 while true; do
-    STATE=$(aws glue get-crawler --name bio-lakehouse-gold-crawler --region "$REGION" \
+    STATE=$(aws glue get-crawler --name "${BIO_PREFIX}-gold-crawler" --region "$REGION" \
         --query 'Crawler.State' --output text | head -1)
     echo "  $(date +%H:%M:%S) Gold crawler: $STATE"
     if [ "$STATE" = "READY" ]; then break; fi
@@ -350,9 +364,9 @@ echo ""
 echo "--- Step 9: Verify Gold Data ---"
 
 QID=$(aws athena start-query-execution \
-    --query-string "SELECT date, readiness_score, sleep_score, activity_score, workout_count, hk_workout_count, resting_heart_rate_bpm, weight_lbs, daily_calories FROM bio_gold.daily_readiness_performance WHERE date >= '${YESTERDAY}' ORDER BY date DESC" \
-    --query-execution-context Database=bio_gold \
-    --result-configuration OutputLocation=s3://bio-lakehouse-athena-results-${AWS_ACCOUNT_ID}/ \
+    --query-string "SELECT date, readiness_score, sleep_score, activity_score, workout_count, hk_workout_count, resting_heart_rate_bpm, weight_lbs, daily_calories FROM ${GOLD_DB}.daily_readiness_performance WHERE date >= '${YESTERDAY}' ORDER BY date DESC" \
+    --query-execution-context Database=${GOLD_DB} \
+    --result-configuration OutputLocation=s3://${BIO_PREFIX}-athena-results-${AWS_ACCOUNT_ID}/ \
     --region "$REGION" --output text --query 'QueryExecutionId')
 
 echo "  Athena query: $QID"
@@ -396,7 +410,7 @@ echo ""
 echo "--- Step 11: Morning Briefing ---"
 
 RESPONSE=$(aws lambda invoke \
-    --function-name bio-lakehouse-morning-briefing \
+    --function-name "${BIO_PREFIX}-morning-briefing" \
     --region "$REGION" \
     --payload '{}' \
     --cli-binary-format raw-in-base64-out \
@@ -433,14 +447,14 @@ echo ""
 echo "--- Step 13: Cleanup Old Files ---"
 
 # Keep only the 2 newest exports in inbox, delete the rest
-for pattern in "export*.zip" "KnownasNoma_workouts*.csv" "Nutrition-Summary*.csv"; do
+for pattern in "export*.zip" "${PELOTON_EXPORT_PREFIX}workouts*.csv" "Nutrition-Summary*.csv"; do
     { ls -t "$INBOX"/$pattern 2>/dev/null || true; } | tail -n +3 | while read f; do
         rm "$f" && echo "  Deleted old: $(basename "$f")"
     done
 done
 
 # Keep only the 2 newest exports in Downloads too
-for pattern in "export*.zip" "KnownasNoma_workouts*.csv"; do
+for pattern in "export*.zip" "${PELOTON_EXPORT_PREFIX}workouts*.csv"; do
     { ls -t ~/Downloads/$pattern 2>/dev/null || true; } | tail -n +3 | while read f; do
         rm "$f" && echo "  Deleted old download: $(basename "$f")"
     done

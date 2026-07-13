@@ -11,6 +11,18 @@ Parameters:
   ProjectPrefix:
     Type: String
     Default: bio-lakehouse
+  GoldDatabaseName:
+    Type: String
+    Default: bio_gold
+    Description: Glue database for the Gold layer (per-instance)
+  SilverDatabaseName:
+    Type: String
+    Default: bio_silver
+    Description: Glue database for the Silver layer (per-instance)
+  PatientReference:
+    Type: String
+    Default: Patient/bio-lakehouse-user-1
+    Description: FHIR patient reference for exported observations
 
 Resources:
   # -------------------------------------------------------
@@ -45,7 +57,7 @@ Resources:
     Properties:
       CatalogId: !Ref 'AWS::AccountId'
       DatabaseInput:
-        Name: bio_gold
+        Name: !Ref GoldDatabaseName
         Description: Gold layer - aggregated analytics and dashboard-ready datasets
 
   # -------------------------------------------------------
@@ -72,7 +84,7 @@ Resources:
         '--silver_bucket': !ImportValue
           Fn::Sub: '${ProjectPrefix}-silver-bucket'
         '--gold_bucket': !Ref GoldBucket
-        '--patient_reference': 'Patient/bio-lakehouse-user-1'
+        '--patient_reference': !Ref PatientReference
         '--extra-py-files': !Sub
           - 's3://${SilverBucket}/scripts/bio_etl_utils.py'
           - SilverBucket: !ImportValue
@@ -135,6 +147,8 @@ Resources:
       DefaultArguments:
         '--gold_bucket': !Ref GoldBucket
         '--athena_results_bucket': !Sub '${ProjectPrefix}-athena-results-${AWS::AccountId}'
+        '--gold_database': !Ref GoldDatabaseName
+        '--silver_database': !Ref SilverDatabaseName
       Tags:
         Project: !Ref ProjectPrefix
 

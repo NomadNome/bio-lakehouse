@@ -43,19 +43,29 @@ job.init(args["JOB_NAME"], args)
 BRONZE_BUCKET = args["bronze_bucket"]
 SILVER_BUCKET = args["silver_bucket"]
 
+# Peloton export files are named <leaderboard-username>_workouts*.csv; the
+# prefix is per-user (multi-instance support). Optional arg keeps existing
+# deployments working before their stack passes it.
+if "--peloton_user_prefix" in sys.argv:
+    PELOTON_USER_PREFIX = getResolvedOptions(sys.argv, ["peloton_user_prefix"])[
+        "peloton_user_prefix"
+    ]
+else:
+    PELOTON_USER_PREFIX = "KnownasNoma_"
+
 print("Processing Peloton workout data...")
 
 # Read Peloton workout CSVs from Bronze.
 # The Bronze bucket may contain both raw full-export CSVs (top-level, title-case
 # headers like "Workout Timestamp") and old Hive-partitioned CSVs (year=/month=
 # paths with pre-processed snake_case headers). These have incompatible schemas,
-# so we read only the top-level raw CSVs (KnownasNoma_workouts_*.csv) which are
+# so we read only the top-level raw CSVs (<username>_workouts_*.csv) which are
 # complete exports containing all historical workouts.
 # List top-level Peloton CSVs and read only the latest (full export = superset)
 import boto3 as _boto3
 _s3 = _boto3.client("s3")
 _resp = _s3.list_objects_v2(
-    Bucket=BRONZE_BUCKET, Prefix="peloton/workouts/KnownasNoma_"
+    Bucket=BRONZE_BUCKET, Prefix=f"peloton/workouts/{PELOTON_USER_PREFIX}"
 )
 _csv_keys = sorted(
     [obj["Key"] for obj in _resp.get("Contents", []) if obj["Key"].endswith(".csv")],

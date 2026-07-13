@@ -11,6 +11,14 @@ Parameters:
   ProjectPrefix:
     Type: String
     Default: bio-lakehouse
+  SilverDatabaseName:
+    Type: String
+    Default: bio_silver
+    Description: Glue database for the Silver layer (per-instance)
+  PelotonUserPrefix:
+    Type: String
+    Default: KnownasNoma_
+    Description: Filename prefix of the user's Peloton exports (<username>_)
 
 Resources:
   # -------------------------------------------------------
@@ -45,7 +53,7 @@ Resources:
     Properties:
       CatalogId: !Ref 'AWS::AccountId'
       DatabaseInput:
-        Name: bio_silver
+        Name: !Ref SilverDatabaseName
         Description: Silver layer - cleaned and normalized bio-optimization data
 
   # -------------------------------------------------------
@@ -135,6 +143,7 @@ Resources:
         ScriptLocation: !Sub 's3://${SilverBucket}/scripts/peloton_normalizer.py'
         PythonVersion: '3'
       DefaultArguments:
+        '--peloton_user_prefix': !Ref PelotonUserPrefix
         '--bronze_bucket': !ImportValue
           Fn::Sub: '${ProjectPrefix}-bronze-bucket'
         '--silver_bucket': !Ref SilverBucket

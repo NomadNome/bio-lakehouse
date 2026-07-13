@@ -16,6 +16,7 @@ from plotly.subplots import make_subplots
 from insights_engine.core.athena_client import AthenaClient
 from insights_engine.insights.base import DateRange, InsightAnalyzer, InsightResult
 from insights_engine.viz import theme
+from insights_engine.config import GOLD_DB
 
 
 def compute_ema(series: pd.Series, span: int) -> pd.Series:
@@ -39,9 +40,9 @@ class TrainingLoadAnalyzer(InsightAnalyzer):
     """Analyzes training load periodization (CTL / ATL / TSB)."""
 
     def analyze(self, date_range: DateRange | None = None) -> InsightResult:
-        sql = """
+        sql = f"""
         SELECT date, tss, had_workout
-        FROM bio_gold.training_load_daily
+        FROM {GOLD_DB}.training_load_daily
         ORDER BY date
         """
         df = self.athena.execute_query(sql)
@@ -72,9 +73,9 @@ class TrainingLoadAnalyzer(InsightAnalyzer):
         df["tsb"] = df["ctl"] - df["atl"]
 
         # Fetch RHR and HRV for recovery quality overlay
-        vitals_df = self.athena.execute_query("""
+        vitals_df = self.athena.execute_query(f"""
             SELECT date, resting_heart_rate_bpm, hrv_ms
-            FROM bio_gold.daily_readiness_performance
+            FROM {GOLD_DB}.daily_readiness_performance
             WHERE resting_heart_rate_bpm IS NOT NULL
             ORDER BY date
         """)

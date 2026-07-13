@@ -11,6 +11,10 @@ Parameters:
   ProjectPrefix:
     Type: String
     Default: bio-lakehouse
+  IngestionLogTableName:
+    Type: String
+    Default: bio_ingestion_log
+    Description: DynamoDB ingestion-log table name (per-instance)
 
 Resources:
   # -------------------------------------------------------
@@ -79,7 +83,7 @@ Resources:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Retain
     Properties:
-      TableName: bio_ingestion_log
+      TableName: !Ref IngestionLogTableName
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: file_path

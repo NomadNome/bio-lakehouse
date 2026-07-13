@@ -15,15 +15,16 @@ import plotly.graph_objects as go
 
 from insights_engine.insights.base import DateRange, InsightAnalyzer, InsightResult
 from insights_engine.viz import theme
+from insights_engine.config import GOLD_DB
 
 
 class RHRTrendAnalyzer(InsightAnalyzer):
     """Tracks resting heart rate trends and flags elevated periods."""
 
     def analyze(self, date_range: DateRange | None = None) -> InsightResult:
-        sql = """
+        sql = f"""
         SELECT date, resting_heart_rate_bpm, readiness_score
-        FROM bio_gold.daily_readiness_performance
+        FROM {GOLD_DB}.daily_readiness_performance
         WHERE resting_heart_rate_bpm IS NOT NULL
         ORDER BY date
         """

@@ -15,6 +15,7 @@ from plotly.subplots import make_subplots
 from insights_engine.core.athena_client import AthenaClient
 from insights_engine.insights.base import DateRange, InsightAnalyzer, InsightResult
 from insights_engine.viz import theme
+from insights_engine.config import GOLD_DB
 
 
 class NutritionAnalyzer(InsightAnalyzer):
@@ -25,7 +26,7 @@ class NutritionAnalyzer(InsightAnalyzer):
         # (they won't until the MFP Glue normalizer + dbt refresh have run)
         try:
             probe = self.athena.execute_query(
-                "SELECT daily_calories FROM bio_gold.daily_readiness_performance LIMIT 1"
+                f"SELECT daily_calories FROM {GOLD_DB}.daily_readiness_performance LIMIT 1"
             )
         except Exception:
             return InsightResult(
@@ -40,12 +41,12 @@ class NutritionAnalyzer(InsightAnalyzer):
                 data=pd.DataFrame(),
             )
 
-        sql = """
+        sql = f"""
         SELECT
             date, daily_calories, protein_g, carbs_g, fat_g, fiber_g,
             protein_pct, carb_pct, fat_pct, meal_count,
             readiness_score, weight_lbs
-        FROM bio_gold.daily_readiness_performance
+        FROM {GOLD_DB}.daily_readiness_performance
         WHERE daily_calories IS NOT NULL
         ORDER BY date
         """

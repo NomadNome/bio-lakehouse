@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from insights_engine.config import OVERLOAD_THRESHOLDS as TH
+from insights_engine.config import OVERLOAD_THRESHOLDS as TH, GOLD_DB
 from insights_engine.core.athena_client import AthenaClient
 from insights_engine.insights.base import DateRange, InsightAnalyzer, InsightResult
 from insights_engine.insights.training_load import compute_ema
@@ -134,9 +134,9 @@ class ProgressiveOverloadAnalyzer(InsightAnalyzer):
         return df
 
     def _load_tss(self) -> pd.DataFrame:
-        sql = """
+        sql = f"""
         SELECT date, tss, had_workout
-        FROM bio_gold.training_load_daily
+        FROM {GOLD_DB}.training_load_daily
         ORDER BY date
         """
         df = self.athena.execute_query(sql)

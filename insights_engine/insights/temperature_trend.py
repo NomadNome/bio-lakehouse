@@ -13,16 +13,17 @@ import plotly.graph_objects as go
 
 from insights_engine.insights.base import DateRange, InsightAnalyzer, InsightResult
 from insights_engine.viz import theme
+from insights_engine.config import GOLD_DB
 
 
 class TemperatureTrendAnalyzer(InsightAnalyzer):
     """Detects temperature anomalies that may signal illness or overtraining."""
 
     def analyze(self, date_range: DateRange | None = None) -> InsightResult:
-        sql = """
+        sql = f"""
         SELECT day, temp_deviation, temp_trend_deviation,
                temp_dev_7day_avg, temp_status, readiness_score
-        FROM bio_gold.temperature_trends
+        FROM {GOLD_DB}.temperature_trends
         ORDER BY day
         """
         df = self.athena.execute_query(sql)

@@ -17,13 +17,14 @@ from scipy import stats
 from insights_engine.core.athena_client import AthenaClient
 from insights_engine.insights.base import DateRange, InsightAnalyzer, InsightResult
 from insights_engine.viz import theme
+from insights_engine.config import GOLD_DB
 
 
 class SleepReadinessAnalyzer(InsightAnalyzer):
     """Analyzes correlation between sleep and next-day readiness."""
 
     def analyze(self, date_range: DateRange | None = None) -> InsightResult:
-        sql = """
+        sql = f"""
         SELECT
             sleep_date,
             performance_date,
@@ -31,7 +32,7 @@ class SleepReadinessAnalyzer(InsightAnalyzer):
             sleep_quality,
             next_day_readiness,
             next_day_output
-        FROM bio_gold.sleep_performance_prediction
+        FROM {GOLD_DB}.sleep_performance_prediction
         WHERE prev_night_sleep IS NOT NULL
           AND next_day_readiness IS NOT NULL
         ORDER BY sleep_date

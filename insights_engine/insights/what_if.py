@@ -20,6 +20,7 @@ from insights_engine.config import (
     WORKOUT_TSS_ESTIMATES,
 )
 from insights_engine.core.athena_client import AthenaClient
+from insights_engine.config import GOLD_DB
 
 
 @dataclass
@@ -89,12 +90,12 @@ class WhatIfSimulator:
         models: dict = {}
 
         # 1. Sleep → readiness regression from sleep_performance_prediction
-        sleep_df = self.athena.execute_query("""
+        sleep_df = self.athena.execute_query(f"""
             SELECT
                 prev_night_sleep AS sleep_score,
                 sleep_quality,
                 next_day_readiness
-            FROM bio_gold.sleep_performance_prediction
+            FROM {GOLD_DB}.sleep_performance_prediction
             WHERE prev_night_sleep IS NOT NULL
               AND next_day_readiness IS NOT NULL
         """)
@@ -102,36 +103,36 @@ class WhatIfSimulator:
         models["sleep_buckets"] = self._build_sleep_buckets(sleep_df)
 
         # 2. Workout type → readiness from workout_type_optimization
-        workout_df = self.athena.execute_query("""
+        workout_df = self.athena.execute_query(f"""
             SELECT
                 workout_type,
                 readiness_bucket,
                 avg_readiness_in_bucket,
                 sample_days
-            FROM bio_gold.workout_type_optimization
+            FROM {GOLD_DB}.workout_type_optimization
             WHERE avg_readiness_in_bucket IS NOT NULL
         """)
         models["workout_type_effects"] = self._build_workout_effects(workout_df)
 
         # 3. Baseline stats from dashboard_30day
-        baseline_df = self.athena.execute_query("""
+        baseline_df = self.athena.execute_query(f"""
             SELECT
                 readiness_score,
                 sleep_score,
                 total_output_kj,
                 had_workout,
                 readiness_7day_avg
-            FROM bio_gold.dashboard_30day
+            FROM {GOLD_DB}.dashboard_30day
             WHERE readiness_score IS NOT NULL
         """)
         models["baseline"] = self._build_baseline(baseline_df)
 
         # 4. Overtraining risk — latest entry with workout count
-        risk_df = self.athena.execute_query("""
+        risk_df = self.athena.execute_query(f"""
             SELECT
                 workouts_last_3_days,
                 overtraining_risk
-            FROM bio_gold.overtraining_risk
+            FROM {GOLD_DB}.overtraining_risk
             WHERE date IS NOT NULL
             ORDER BY date DESC
             LIMIT 1
@@ -139,9 +140,9 @@ class WhatIfSimulator:
         models["current_streak"] = self._extract_streak(risk_df)
 
         # 5. TSS history for seeding CTL/ATL in multi-day planning
-        tss_df = self.athena.execute_query("""
+        tss_df = self.athena.execute_query(f"""
             SELECT date, tss
-            FROM bio_gold.training_load_daily
+            FROM {GOLD_DB}.training_load_daily
             WHERE tss IS NOT NULL
             ORDER BY date
         """)

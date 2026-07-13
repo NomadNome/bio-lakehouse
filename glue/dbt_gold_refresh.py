@@ -33,14 +33,31 @@ args = get_args(sys.argv, ["gold_bucket", "athena_results_bucket"])
 _acct = boto3.client("sts").get_caller_identity()["Account"]
 GOLD_BUCKET = args.get("gold_bucket", f"bio-lakehouse-gold-{_acct}")
 ATHENA_RESULTS = f"s3://{args.get('athena_results_bucket', f'bio-lakehouse-athena-results-{_acct}')}/"
-DATABASE = "bio_gold"
+DATABASE = args.get("gold_database", "bio_gold")
+SILVER_DATABASE = args.get("silver_database", "bio_silver")
+# dbt writes staging models to <gold-schema>_silver (generate_schema_name)
+STAGING_SCHEMA = f"{DATABASE}_silver"
 
 athena = boto3.client("athena")
 s3 = boto3.client("s3")
 
 
+def _hydrate(sql):
+    """Point the compiled dbt SQL at this instance's databases.
+
+    bio_gold_silver must be replaced before bio_silver (substring) — safe
+    here because replacements run longest-pattern-first.
+    """
+    return (
+        sql.replace('bio_gold_silver."', f'{STAGING_SCHEMA}."')
+        .replace('bio_silver."', f'{SILVER_DATABASE}."')
+        .replace('bio_gold."', f'{DATABASE}."')
+    )
+
+
 def run_query(sql, description=""):
     """Execute an Athena query and wait for completion."""
+    sql = _hydrate(sql)
     print(f"Running: {description}")
     resp = athena.start_query_execution(
         QueryString=sql,

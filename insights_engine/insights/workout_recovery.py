@@ -15,6 +15,7 @@ from scipy import stats
 from insights_engine.core.athena_client import AthenaClient
 from insights_engine.insights.base import DateRange, InsightAnalyzer, InsightResult
 from insights_engine.viz import theme
+from insights_engine.config import GOLD_DB
 
 
 class WorkoutRecoveryAnalyzer(InsightAnalyzer):
@@ -22,7 +23,7 @@ class WorkoutRecoveryAnalyzer(InsightAnalyzer):
 
     def analyze(self, date_range: DateRange | None = None) -> InsightResult:
         # Get daily data with workout info and next-day readiness
-        sql = """
+        sql = f"""
         SELECT
             a.date AS workout_date,
             a.readiness_score,
@@ -31,8 +32,8 @@ class WorkoutRecoveryAnalyzer(InsightAnalyzer):
             a.had_workout,
             a.total_output_kj,
             b.readiness_score AS next_day_readiness
-        FROM bio_gold.dashboard_30day a
-        JOIN bio_gold.dashboard_30day b
+        FROM {GOLD_DB}.dashboard_30day a
+        JOIN {GOLD_DB}.dashboard_30day b
             ON COALESCE(TRY(CAST(b.date AS date)), TRY(date_parse(b.date, '%Y-%m-%d %H:%i:%s')))
              = date_add('day', 1, COALESCE(TRY(CAST(a.date AS date)), TRY(date_parse(a.date, '%Y-%m-%d %H:%i:%s'))))
         WHERE b.readiness_score IS NOT NULL

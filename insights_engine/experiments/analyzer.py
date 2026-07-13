@@ -15,6 +15,7 @@ import pandas as pd
 from scipy import stats
 
 from insights_engine.experiments.tracker import Intervention
+from insights_engine.config import GOLD_DB
 
 
 @dataclass
@@ -51,7 +52,7 @@ def _get_metric_data(
     """Fetch daily metric data from Gold layer."""
     query = f"""
         SELECT date, {metric_col}
-        FROM bio_gold.daily_readiness_performance
+        FROM {GOLD_DB}.daily_readiness_performance
         WHERE {metric_col} IS NOT NULL
           AND COALESCE(
                 TRY(CAST(date AS date)),
@@ -323,7 +324,7 @@ def correlation_analysis(
     """
     query = f"""
         SELECT date, {input_col}, {outcome_col}
-        FROM bio_gold.daily_readiness_performance
+        FROM {GOLD_DB}.daily_readiness_performance
         WHERE {input_col} IS NOT NULL
           AND {outcome_col} IS NOT NULL
           AND COALESCE(

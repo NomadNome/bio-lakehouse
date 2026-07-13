@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from insights_engine.config import DISCOVERY_CONFIG
+from insights_engine.config import DISCOVERY_CONFIG, GOLD_DB
 from insights_engine.core.athena_client import AthenaClient
 
 
@@ -355,7 +355,7 @@ class CorrelationDiscoveryEngine:
         cols = ", ".join(["date"] + ALL_METRICS)
         sql = f"""
         SELECT {cols}
-        FROM bio_gold.daily_readiness_performance
+        FROM {GOLD_DB}.daily_readiness_performance
         WHERE COALESCE(
                 TRY(CAST(date AS date)),
                 TRY(date_parse(date, '%Y-%m-%d %H:%i:%s'))
