@@ -197,6 +197,40 @@ Resources:
             Resource:
               - !GetAtt GoldBucket.Arn
               - !Sub '${GoldBucket.Arn}/*'
+          # dbt gold refresh runs CTAS via Athena (was manual drift on the
+          # original instance; now in-template so clones work out of the box)
+          - Sid: AthenaQueryExecution
+            Effect: Allow
+            Action:
+              - 'athena:StartQueryExecution'
+              - 'athena:GetQueryExecution'
+              - 'athena:GetQueryResults'
+              - 'athena:StopQueryExecution'
+            Resource: '*'
+          - Sid: AthenaResultsBucket
+            Effect: Allow
+            Action:
+              - 's3:GetObject'
+              - 's3:PutObject'
+              - 's3:GetBucketLocation'
+              - 's3:ListBucket'
+            Resource:
+              - !Sub 'arn:aws:s3:::${ProjectPrefix}-athena-results-${AWS::AccountId}'
+              - !Sub 'arn:aws:s3:::${ProjectPrefix}-athena-results-${AWS::AccountId}/*'
+          - Sid: GlueCatalogForCTAS
+            Effect: Allow
+            Action:
+              - 'glue:GetDatabase'
+              - 'glue:GetDatabases'
+              - 'glue:GetTable'
+              - 'glue:GetTables'
+              - 'glue:CreateTable'
+              - 'glue:UpdateTable'
+              - 'glue:DeleteTable'
+              - 'glue:GetPartition'
+              - 'glue:GetPartitions'
+              - 'glue:BatchCreatePartition'
+            Resource: '*'
 
 Outputs:
   GoldBucketName:
