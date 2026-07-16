@@ -15,6 +15,9 @@ Event format:
 
 import json
 import os
+import time
+import urllib.parse
+import urllib.request
 from datetime import date, datetime, timedelta
 
 import boto3
@@ -28,6 +31,10 @@ s3 = boto3.client("s3")
 
 # Configuration
 SSM_TOKEN_PARAM = os.environ.get("SSM_TOKEN_PARAM", "/bio-lakehouse/oura-api-token")
+# When set, OAuth2 mode is used instead of a legacy PAT (Oura deprecated PATs
+# in 2026; new users authorize an OAuth app via scripts/oura_oauth_authorize.py)
+SSM_OAUTH_PARAM = os.environ.get("SSM_OAUTH_PARAM", "")
+OURA_TOKEN_URL = "https://api.ouraring.com/oauth/token"
 BRONZE_BUCKET = os.environ.get("BRONZE_BUCKET", "")
 DATA_TYPES = ["readiness", "sleep", "activity"]
 
@@ -45,9 +52,54 @@ FILE_NAME_MAP = {
 
 
 def get_oura_token():
-    """Retrieve Oura PAT from SSM Parameter Store."""
+    """Return a usable Oura bearer token.
+
+    PAT mode (legacy, grandfathered accounts): read the token straight from
+    SSM. OAuth mode: read the token bundle, refresh if within 5 minutes of
+    expiry, and persist the rotated refresh token (Oura refresh tokens are
+    single-use — losing the rotation means re-authorizing in the browser).
+    """
+    if SSM_OAUTH_PARAM:
+        return _get_oauth_access_token()
     resp = ssm.get_parameter(Name=SSM_TOKEN_PARAM, WithDecryption=True)
     return resp["Parameter"]["Value"]
+
+
+def _get_oauth_access_token():
+    bundle = json.loads(
+        ssm.get_parameter(Name=SSM_OAUTH_PARAM, WithDecryption=True)[
+            "Parameter"
+        ]["Value"]
+    )
+    if bundle.get("expires_at", 0) - time.time() > 300:
+        return bundle["access_token"]
+
+    print("OAuth access token near expiry — refreshing")
+    data = urllib.parse.urlencode(
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": bundle["refresh_token"],
+            "client_id": bundle["client_id"],
+            "client_secret": bundle["client_secret"],
+        }
+    ).encode()
+    with urllib.request.urlopen(
+        urllib.request.Request(OURA_TOKEN_URL, data=data), timeout=15
+    ) as resp:
+        tokens = json.loads(resp.read().decode("utf-8"))
+
+    bundle["access_token"] = tokens["access_token"]
+    bundle["refresh_token"] = tokens.get("refresh_token", bundle["refresh_token"])
+    bundle["expires_at"] = int(time.time()) + int(tokens.get("expires_in", 86400))
+
+    # Persist BEFORE returning: the old refresh token is now dead.
+    ssm.put_parameter(
+        Name=SSM_OAUTH_PARAM,
+        Type="SecureString",
+        Value=json.dumps(bundle),
+        Overwrite=True,
+    )
+    return bundle["access_token"]
 
 
 def build_s3_key(data_type, day_str):

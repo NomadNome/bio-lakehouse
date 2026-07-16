@@ -11,6 +11,15 @@ Parameters:
   ProjectPrefix:
     Type: String
     Default: bio-lakehouse
+  OuraOAuthParamName:
+    Type: String
+    Default: ''
+    Description: >
+      SSM SecureString holding the OAuth token bundle (JSON) created by
+      scripts/oura_oauth_authorize.py. Empty = legacy PAT mode.
+
+Conditions:
+  OAuthMode: !Not [!Equals [!Ref OuraOAuthParamName, '']]
 
 Resources:
   # -------------------------------------------------------
@@ -58,6 +67,15 @@ Resources:
                 Action:
                   - 'ssm:GetParameter'
                 Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectPrefix}/oura-api-token'
+              - !If
+                - OAuthMode
+                - Sid: SSMOAuthBundle
+                  Effect: Allow
+                  Action:
+                    - 'ssm:GetParameter'
+                    - 'ssm:PutParameter'
+                  Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${OuraOAuthParamName}'
+                - !Ref 'AWS::NoValue'
 
   # -------------------------------------------------------
   # Lambda Function
@@ -75,6 +93,7 @@ Resources:
       Environment:
         Variables:
           SSM_TOKEN_PARAM: !Ref OuraApiTokenParam
+          SSM_OAUTH_PARAM: !If [OAuthMode, !Ref OuraOAuthParamName, !Ref 'AWS::NoValue']
           BRONZE_BUCKET: !Sub '${ProjectPrefix}-bronze-${AWS::AccountId}'
       Code:
         ZipFile: |
