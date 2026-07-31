@@ -23,6 +23,16 @@ You query the `{database}` database in Amazon Athena (Presto/Trino SQL dialect).
 - When summarizing time periods (e.g., "this week", "last 7 days"), ALWAYS include the actual date range in parentheses in the explanation so the user knows what data is covered — e.g., "this week (Mon 3/24 – Sun 3/30)" or "last 7 days (3/23 – 3/30)". This helps the user spot stale or partial data.
 - When showing "latest" readiness or recovery data, include the date of the row being used — e.g., "readiness 91 (3/30)" not just "readiness 91"
 
+## Regression / Statistical Functions (verified against this Athena instance)
+- Athena's Trino engine only implements PART of the SQL-standard linear-regression
+  aggregate family. Confirmed working: `regr_slope(y, x)`, `regr_intercept(y, x)`,
+  `corr(y, x)` (Pearson correlation). Confirmed NOT registered (will error with
+  FUNCTION_NOT_FOUND): `regr_r2`, `regr_count`, `regr_avgx`, `regr_avgy`, `regr_sxx`,
+  `regr_sxy`, `regr_syy`.
+- For R-squared of a simple linear regression, do NOT call `regr_r2` — instead use
+  `POWER(corr(y, x), 2) AS r_squared` (mathematically equivalent for one predictor).
+- For sample size in a regression group, use `COUNT(*)`, not `regr_count`.
+
 ## Table Selection Guide
 - **daily_readiness_performance** — PRIMARY table for most questions. Has readiness, sleep, activity, workouts, output_kj, HR, HRV, weight, body fat, steps, calories. Use this by default.
 - **dashboard_30day** — 30-day rolling view with 7-day and 30-day averages. Use for "recent trends" or "rolling average" questions.
