@@ -21,6 +21,18 @@ from insights_engine.core.athena_client import AthenaClient
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 
+def _extract_text(response) -> str:
+    """Pull the text out of a Claude response, skipping thinking blocks.
+
+    Sonnet 5+ runs adaptive thinking by default, so content[0] is often a
+    ThinkingBlock (no .text attribute) rather than the TextBlock.
+    """
+    for block in response.content:
+        if block.type == "text":
+            return block.text
+    raise ValueError("No text block in Claude response (only thinking/tool blocks)")
+
+
 @dataclass
 class NLToSQLResult:
     sql: str
@@ -127,7 +139,7 @@ class NLToSQLEngine:
         )
 
         # Parse response
-        raw_text = response.content[0].text.strip()
+        raw_text = _extract_text(response).strip()
 
         # Extract JSON from response (handle markdown code blocks)
         if raw_text.startswith("```"):
@@ -254,4 +266,4 @@ Write a concise, natural language answer to the user's question based on these r
             max_tokens=512,
             messages=[{"role": "user", "content": prompt}],
         )
-        return response.content[0].text.strip()
+        return _extract_text(response).strip()

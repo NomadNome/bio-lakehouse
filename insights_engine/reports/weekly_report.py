@@ -394,7 +394,12 @@ Write the report following the structure in your instructions. Focus on what CHA
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )
-        return response.content[0].text.strip()
+        # Sonnet 5+ runs adaptive thinking by default, so content[0] can be a
+        # ThinkingBlock rather than the TextBlock — find the text block explicitly.
+        for block in response.content:
+            if block.type == "text":
+                return block.text.strip()
+        raise ValueError("No text block in Claude response (only thinking/tool blocks)")
 
     def _render_html(
         self,
