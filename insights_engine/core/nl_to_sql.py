@@ -263,7 +263,11 @@ Write a concise, natural language answer to the user's question based on these r
 
         response = self.client.messages.create(
             model=self.model,
-            max_tokens=512,
+            # Adaptive thinking tokens count against max_tokens on Sonnet 5+,
+            # so 512 left too little headroom for the actual answer and
+            # intermittently produced a thinking-only response.
+            max_tokens=1500,
+            output_config={"effort": "low"},
             messages=[{"role": "user", "content": prompt}],
         )
         return _extract_text(response).strip()

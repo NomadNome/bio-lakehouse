@@ -159,10 +159,14 @@ class WeeklyReportGenerator:
 
         # Generate narrative via Claude
         print("Generating narrative via Claude...")
-        narrative = self._generate_narrative(
-            insights, week_start, week_ending, key_metrics,
-            prev_metrics=prev_metrics, daily_data=daily_data,
-        )
+        try:
+            narrative = self._generate_narrative(
+                insights, week_start, week_ending, key_metrics,
+                prev_metrics=prev_metrics, daily_data=daily_data,
+            )
+        except Exception as e:
+            print(f"  WARNING: Narrative generation failed: {e}")
+            narrative = "Narrative unavailable this week — see the charts and metrics below."
 
         # Render chart images as base64
         print("Rendering chart images...")
@@ -390,7 +394,10 @@ Write the report following the structure in your instructions. Focus on what CHA
 
         response = self.client.messages.create(
             model=self.model,
-            max_tokens=2048,
+            # Extra headroom: adaptive thinking tokens count against
+            # max_tokens on Sonnet 5+, so a tight budget risks a
+            # thinking-only response with no narrative text.
+            max_tokens=3000,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )

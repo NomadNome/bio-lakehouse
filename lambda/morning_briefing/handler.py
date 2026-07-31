@@ -443,7 +443,10 @@ def narrate_briefing(data_date, bullets):
     try:
         response = client.messages.create(
             model=NARRATOR_MODEL,
-            max_tokens=400,
+            # Extra headroom: adaptive thinking tokens count against
+            # max_tokens on Sonnet 5+, so a tight budget risks a
+            # thinking-only response with no narrative text.
+            max_tokens=1000,
             system=(
                 "You are the narrator for a personal health data platform that "
                 "fuses Oura, Peloton, Apple Health, and nutrition data. You write "

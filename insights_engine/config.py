@@ -26,7 +26,9 @@ CLAUDE_CONFIG = {
     "api_key_env": "ANTHROPIC_API_KEY",
     "nl_to_sql_model": "claude-sonnet-5",
     "insight_narrator_model": "claude-sonnet-5",
-    "max_tokens": 2048,
+    # Adaptive thinking tokens count against max_tokens on Sonnet 5+; 2048 was
+    # occasionally too tight and truncated the SQL-translation JSON mid-response.
+    "max_tokens": 4096,
 }
 
 # Chart Styling
