@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 from jinja2 import Environment, FileSystemLoader
 
@@ -83,7 +85,7 @@ class TestReportGeneratorInit:
 
         mock_athena = MagicMock()
         gen = WeeklyReportGenerator(mock_athena)
-        assert len(gen.analyzers) == 5
+        assert len(gen.analyzers) == 10
 
     def test_generator_raises_without_api_key(self):
         from insights_engine.reports.weekly_report import WeeklyReportGenerator
@@ -92,6 +94,68 @@ class TestReportGeneratorInit:
         with patch.dict("os.environ", {}, clear=True):
             with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
                 WeeklyReportGenerator(mock_athena)
+
+
+class TestReportGenerationSafety:
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test-key"})
+    def test_key_metrics_tolerate_null_athena_aggregates(self):
+        from insights_engine.reports.weekly_report import WeeklyReportGenerator
+
+        mock_athena = MagicMock()
+        mock_athena.execute_query.return_value = pd.DataFrame([{
+            "avg_readiness": 80.0,
+            "avg_sleep": 79.0,
+            "workout_days": None,
+            "total_output": None,
+            "data_days": None,
+            "avg_mindfulness": None,
+            "mindfulness_days": None,
+            "avg_calories": None,
+            "nutrition_days": None,
+        }])
+        gen = WeeklyReportGenerator(mock_athena)
+
+        metrics = gen._get_key_metrics(
+            pd.Timestamp("2026-09-01").date(),
+            pd.Timestamp("2026-09-07").date(),
+        )
+
+        by_label = {metric["label"]: metric["value"] for metric in metrics}
+        assert by_label["Workout Days"] == "0"
+        assert by_label["Total Output (kJ)"] == "0"
+        assert by_label["Data Days"] == "0/7"
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test-key"})
+    def test_narrator_disables_thinking_and_returns_text_block(self):
+        from insights_engine.reports.weekly_report import WeeklyReportGenerator
+
+        gen = WeeklyReportGenerator(MagicMock())
+        gen._client = MagicMock()
+        gen._client.messages.create.return_value = SimpleNamespace(content=[
+            SimpleNamespace(type="thinking", thinking="internal"),
+            SimpleNamespace(type="text", text="  A useful weekly summary.  "),
+        ])
+
+        narrative = gen._generate_narrative([], pd.Timestamp("2026-09-01").date(), pd.Timestamp("2026-09-07").date())
+
+        assert narrative == "A useful weekly summary."
+        assert gen._client.messages.create.call_args.kwargs["thinking"] == {"type": "disabled"}
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test-key"})
+    def test_narrator_retries_one_empty_response(self):
+        from insights_engine.reports.weekly_report import WeeklyReportGenerator
+
+        gen = WeeklyReportGenerator(MagicMock())
+        gen._client = MagicMock()
+        gen._client.messages.create.side_effect = [
+            SimpleNamespace(content=[SimpleNamespace(type="thinking", thinking="internal")]),
+            SimpleNamespace(content=[SimpleNamespace(type="text", text="Recovered summary")]),
+        ]
+
+        narrative = gen._generate_narrative([], pd.Timestamp("2026-09-01").date(), pd.Timestamp("2026-09-07").date())
+
+        assert narrative == "Recovered summary"
+        assert gen._client.messages.create.call_count == 2
 
 
 class TestDelivery:

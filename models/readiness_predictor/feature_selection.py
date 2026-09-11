@@ -38,7 +38,7 @@ def load_feature_data() -> pd.DataFrame:
     athena = AthenaClient()
     df = athena.execute_query("""
         SELECT *
-        FROM bio_gold.feature_readiness_daily
+        FROM feature_readiness_daily
         ORDER BY date
     """)
     return df
@@ -58,7 +58,10 @@ def get_candidate_features(df: pd.DataFrame) -> list[str]:
 
 
 def mutual_information_scores(
-    df: pd.DataFrame, features: list[str], target: str = TARGET_COL
+    df: pd.DataFrame,
+    features: list[str],
+    target: str = TARGET_COL,
+    verbose: bool = True,
 ) -> dict[str, float]:
     """Compute mutual information between each feature and the target."""
     df_clean = df[features + [target]].copy()
@@ -66,7 +69,7 @@ def mutual_information_scores(
         df_clean[col] = pd.to_numeric(df_clean[col], errors="coerce")
     df_clean = df_clean.dropna()
 
-    if len(df_clean) < 20:
+    if verbose and len(df_clean) < 20:
         print(f"WARNING: Only {len(df_clean)} complete rows for MI scoring.")
 
     X = df_clean[features].values
@@ -100,6 +103,7 @@ def correlation_filter(
                     to_drop.add(feat_j)
                 else:
                     to_drop.add(feat_i)
+                    break
 
     return [f for f in features if f not in to_drop]
 
@@ -108,6 +112,7 @@ def select_features(
     df: pd.DataFrame | None = None,
     top_k: int = 8,
     corr_threshold: float = 0.85,
+    verbose: bool = True,
 ) -> tuple[list[str], dict]:
     """
     Full feature selection pipeline.
@@ -120,7 +125,10 @@ def select_features(
 
     # Get candidate features
     candidates = get_candidate_features(df)
-    print(f"Candidate features ({len(candidates)}): {candidates}")
+    if not candidates:
+        raise ValueError("No numeric candidate features are available")
+    if verbose:
+        print(f"Candidate features ({len(candidates)}): {candidates}")
 
     # Ensure numeric
     for col in candidates + [TARGET_COL]:
@@ -129,12 +137,13 @@ def select_features(
     df_valid = df.dropna(subset=[TARGET_COL])
 
     # Mutual information scoring
-    mi_scores = mutual_information_scores(df_valid, candidates)
+    mi_scores = mutual_information_scores(df_valid, candidates, verbose=verbose)
     sorted_mi = sorted(mi_scores.items(), key=lambda x: x[1], reverse=True)
 
-    print("\nMutual Information Scores:")
-    for feat, score in sorted_mi:
-        print(f"  {feat:30s} {score:.4f}")
+    if verbose:
+        print("\nMutual Information Scores:")
+        for feat, score in sorted_mi:
+            print(f"  {feat:30s} {score:.4f}")
 
     # Correlation filtering
     filtered = correlation_filter(df_valid, candidates, mi_scores, corr_threshold)
@@ -143,9 +152,10 @@ def select_features(
     filtered_ranked = sorted(filtered, key=lambda f: mi_scores.get(f, 0), reverse=True)
     selected = filtered_ranked[:top_k]
 
-    print(f"\nSelected features ({len(selected)}):")
-    for feat in selected:
-        print(f"  {feat:30s} MI={mi_scores[feat]:.4f}")
+    if verbose:
+        print(f"\nSelected features ({len(selected)}):")
+        for feat in selected:
+            print(f"  {feat:30s} MI={mi_scores[feat]:.4f}")
 
     metadata = {
         "all_candidates": candidates,

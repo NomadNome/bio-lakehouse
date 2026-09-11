@@ -22,6 +22,7 @@ if [ -f "$ENV_FILE" ]; then
 fi
 BIO_PREFIX="${BIO_PREFIX:-bio-lakehouse}"
 GOLD_DB="${BIO_ATHENA_DATABASE:-bio_gold}"
+STREAMLIT_PORT="${STREAMLIT_PORT:-8501}"
 PELOTON_EXPORT_PREFIX="${PELOTON_EXPORT_PREFIX:-KnownasNoma_}"
 
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}"
@@ -87,6 +88,28 @@ if [ -n "$MFP_CSV" ]; then
 else
     echo "  MFP:       (none found — skipping)"
 fi
+
+# Mark ownership of downstream orchestration before any Bronze uploads can
+# complete an Oura normalizer. The EventBridge orchestrator reads this short-
+# lived lock and yields to this script, preventing duplicate Gold refreshes.
+PIPELINE_LOCK_URI="s3://${BUCKET}/control/manual-pipeline.lock"
+PIPELINE_LOCK_FILE="/tmp/${BIO_PREFIX}-manual-pipeline.lock"
+
+write_pipeline_lock() {
+    local expires_at="$1"
+    printf '{"batch_id":"%s","expires_at_epoch":%s}\n' "$BATCH_DATE" "$expires_at" > "$PIPELINE_LOCK_FILE"
+    aws s3 cp "$PIPELINE_LOCK_FILE" "$PIPELINE_LOCK_URI" \
+        --quiet --sse AES256 --region "$REGION"
+}
+
+clear_pipeline_lock() {
+    write_pipeline_lock 0 >/dev/null 2>&1 || true
+}
+
+LOCK_EXPIRES=$(date -v+3H +%s 2>/dev/null || date -d "+3 hours" +%s)
+write_pipeline_lock "$LOCK_EXPIRES"
+trap clear_pipeline_lock EXIT INT TERM
+echo "  Pipeline orchestration lock active until epoch ${LOCK_EXPIRES}."
 
 # -----------------------------------------------
 # STEP 2: Parse HealthKit Export
@@ -229,11 +252,12 @@ echo "--- Step 5: Run Glue Normalizers ---"
 start_or_attach() {
     local job_name="$1"; shift
     local run_id
-    run_id=$(aws glue start-job-run --job-name "$job_name" --region "$REGION" "$@" \
-        --query 'JobRunId' --output text 2>/dev/null)
-    if [ $? -eq 0 ] && [ -n "$run_id" ]; then
-        echo "$run_id"
-        return
+    if run_id=$(aws glue start-job-run --job-name "$job_name" --region "$REGION" "$@" \
+        --query 'JobRunId' --output text 2>/dev/null); then
+        if [ -n "$run_id" ]; then
+            echo "$run_id"
+            return
+        fi
     fi
     # ConcurrentRunsExceededException — attach to the existing RUNNING/STARTING run
     run_id=$(aws glue get-job-runs --job-name "$job_name" --region "$REGION" --max-results 5 \
@@ -394,12 +418,10 @@ echo ""
 echo "--- Step 10: Restart Streamlit ---"
 
 cd "$PROJECT_DIR"
-# Kill existing Streamlit and restart in background (non-blocking)
-# Use nohup + disown so Streamlit survives when the pipeline script exits
-# (LaunchD kills child processes of completed jobs otherwise)
-/usr/sbin/lsof -ti :8501 | xargs kill -9 2>/dev/null || true
-sleep 1
-nohup bash run_streamlit.sh > /dev/null 2>&1 &
+# The launcher stops only the listener for this instance's port. Pass ENV_FILE
+# explicitly because it is a shell setting, not necessarily an exported value.
+# nohup + disown keep Streamlit alive after the scheduled pipeline exits.
+nohup env ENV_FILE="$ENV_FILE" bash run_streamlit.sh > /dev/null 2>&1 &
 disown
 echo "  Streamlit started (PID $!)"
 
@@ -465,5 +487,5 @@ echo "  Cleanup complete!"
 echo ""
 echo "========================================"
 echo "Daily ingestion COMPLETE!"
-echo "Streamlit: http://localhost:8501"
+echo "Streamlit: http://localhost:${STREAMLIT_PORT}"
 echo "========================================"

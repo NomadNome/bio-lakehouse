@@ -10,7 +10,7 @@ Enterprise AI fails not because models are bad, but because the infrastructure c
 
 - **Data Governance**: How do you ensure AI models query clean, validated data? &rarr; Medallion architecture with automated quality checks
 - **Security**: How do you handle sensitive data (biometrics = PII)? &rarr; Encrypted ingestion, IAM isolation, audit logging
-- **Reliability**: How do you prevent AI systems from breaking in production? &rarr; Event-driven architecture, retry logic, 221+ unit tests
+- **Reliability**: How do you prevent AI systems from breaking in production? &rarr; Event-driven architecture, retry logic, and 250+ unit tests in CI
 - **Cost**: How do you avoid runaway cloud bills? &rarr; Serverless pay-per-query, result caching, optimized Athena views
 
 This isn't a toy project -- it's a blueprint for deploying AI systems in regulated industries (healthcare, finance, government).
@@ -18,10 +18,10 @@ This isn't a toy project -- it's a blueprint for deploying AI systems in regulat
 **What this demonstrates:**
 
 - **Data Governance**: Medallion architecture with clear lineage (Bronze &rarr; Silver &rarr; Gold), DynamoDB ingestion logging, and schema validation at each layer
-- **AI Infrastructure**: Production Claude integration with prompt engineering, result caching, and 95% NL-to-SQL accuracy on live data
-- **Security & Compliance**: IAM least-privilege roles, SSE-AES256 encryption, OAuth token management, and audit trails via DynamoDB
-- **Distributed Systems**: PySpark ETL (scales from MB to PB), event-driven Lambda triggers, serverless orchestration
-- **Operational Reliability**: 0 failed Lambda invocations, 100% Glue job success rate, automated daily pipeline + weekly reporting since deployment
+- **AI Infrastructure**: Claude integration with prompt engineering, schema-aware queries, and result caching
+- **Security Controls**: IAM least-privilege roles, SSE-AES256 encryption, OAuth token management, and operational audit records via DynamoDB
+- **Distributed Systems**: PySpark ETL, event-driven Lambda triggers, and serverless orchestration
+- **Operational Reliability**: CloudWatch monitoring, automated daily ingestion, and weekly reporting
 
 Unlike synthetic demos, this system runs daily against real biometric data. It proves not just technical knowledge, but the operational discipline required to deploy AI systems in regulated environments (healthcare data, PII handling).
 
@@ -35,28 +35,30 @@ The same patterns used here -- metadata-driven governance, encrypted ingestion p
 | **ETL** | Event-driven Lambda &rarr; Glue PySpark &rarr; dbt &rarr; DynamoDB logging |
 | **Ingestion** | Dual pipelines: Serverless Lambda (Oura API) + local automation (Peloton, HealthKit, MFP) |
 | **Gold Layer** | 14+ dbt models/views (energy states, overtraining risk, training load, sleep architecture, correlations) |
-| **AI Queries** | Claude Sonnet NL-to-SQL with 95% accuracy, live schema injection, 10 few-shot examples |
+| **AI Queries** | Claude Sonnet NL-to-SQL with live schema injection, guardrails, and few-shot examples |
 | **Insights** | 11 statistical analyzers (Pearson, Mann-Whitney U, Spearman, LOWESS, z-scores) with visualizations |
-| **ML Pipeline** | Next-day readiness predictor (GradientBoosting, walk-forward CV, Optuna tuning) |
+| **ML Pipeline** | Next-day readiness forecast with temporal holdout evaluation, walk-forward model selection, and a rolling-baseline safety fallback |
 | **Automation** | Daily pipeline orchestration, health alerts (SNS), morning briefing, weekly reports |
-| **App** | 8-page Streamlit dashboard with What-If simulator, experiment tracker, FHIR export |
-| **Testing** | 221+ unit tests across 13 test suites |
+| **App** | 9-page Streamlit dashboard with Coach, What-If simulator, experiment tracker, and FHIR export |
+| **Testing** | 250+ unit tests with automated Python 3.12 CI |
 | **Performance** | Desktop I/O optimization (imports: 600s &rarr; <1s), Athena result caching, sub-20s query response |
 
-**Data Volume**: 863 workouts (2021-2026) &bull; 120+ days Oura biometrics &bull; 1,977+ Gold rows (2020-2026) &bull; 14+ Gold views
-**Uptime**: Ingestion running since 2026-02-17 &bull; 0 failed Lambda invocations &bull; 100% Glue job success rate
+**Data Volume**: 860+ workouts &bull; 280+ daily readiness samples &bull; multi-year HealthKit history &bull; 14+ Gold views
+**Operations**: Ingestion running since 2026-02-17 with CloudWatch and ingestion-log monitoring
 
-## Security & Compliance Posture
+## Security Controls & Interoperability
+
+These are implemented technical safeguards, not a compliance certification. HIPAA, SOC 2, and FedRAMP also require organizational policies, risk management, access reviews, incident response, evidence collection, and—where applicable—formal assessment or authorization. This project has not undergone those processes.
 
 - **Encryption at Rest & In Transit** -- All S3 uploads use SSE-AES256 (bucket policy enforced), OAuth tokens stored in AWS Systems Manager SecureString
-- **IAM Least Privilege** -- Lambda roles scoped to write-only S3 access, read-only SSM access, DynamoDB write (no wildcard permissions)
-- **Audit Trail** -- DynamoDB `bio_ingestion_log` table records every ingestion event (file path, timestamp, source, record count, status) for compliance reporting
-- **Data Lineage** -- Bronze &rarr; Silver &rarr; Gold transformations tracked via Glue job logs + Athena query history; can trace any Gold insight back to raw source
-- **PII Handling** -- Biometric data classified as sensitive; ingestion scripts sanitize outputs (no PII in logs), data stays within AWS VPC
+- **IAM Scoping** -- Lambda roles use service- and resource-scoped policies where AWS supports them; remaining broad Glue orchestration permissions are visible in the infrastructure templates and should be reviewed as services evolve
+- **Operational Audit Records** -- DynamoDB `bio_ingestion_log` records ingestion events (file path, timestamp, source, record count, status); it is useful operational evidence but is not a complete compliance audit trail
+- **Data Lineage** -- Bronze &rarr; Silver &rarr; Gold transformations are represented in versioned Glue/dbt code, Glue logs, and Athena query history
+- **Sensitive Data Handling** -- Biometric data is stored in private S3 resources and viewed through local-only dashboards; there is no public application endpoint
 - **Token Rotation** -- OAuth refresh flow implemented; tokens never committed to Git (`.oura-tokens.json` in `.gitignore`)
-- **FHIR R4 Compliance** -- Health data exportable as FHIR R4 Bundles (Observation resources) for EHR interoperability
+- **FHIR R4 Interoperability** -- Health data can be exported as FHIR R4-shaped Bundles using Observation resources; the export has not been certified against a specific implementation guide or receiving EHR
 
-Deploying AI in healthcare, finance, or government requires proving your infrastructure meets compliance standards (HIPAA, SOC 2, FedRAMP). This project demonstrates those patterns in a working system.
+The architecture demonstrates controls commonly used in regulated environments, but the controls alone do not establish HIPAA, SOC 2, or FedRAMP compliance.
 
 ## Architecture
 
@@ -64,7 +66,7 @@ Deploying AI in healthcare, finance, or government requires proving your infrast
                      PRESENTATION LAYER
   ┌──────────────────┐    ┌─────────────────────────────┐    ┌─────────────────┐
   │   Streamlit UI    │    │   Weekly Report (HTML/PDF)   │    │  Morning Brief  │
-  │  8 pages:         │    │   - Cron: Mon 7am EST        │    │  (SNS email)    │
+  │  9 pages:         │    │   - Cron: Mon 7am EST        │    │  (SNS email)    │
   │  - Chat (NL→SQL) │    │   - Saved to S3 gold         │    │  after Gold     │
   │  - 11 Insights    │    │   - PDF export               │    │  refresh        │
   │  - What-If sim    │    │                              │    │                 │
@@ -113,15 +115,15 @@ Deploying AI in healthcare, finance, or government requires proving your infrast
 - **Natural Language Queries** -- Ask health questions in plain English ("Am I overtraining?"), get SQL-backed answers in seconds via Claude Sonnet
 - **11 Signature Insights** -- Sleep-readiness correlation, workout recovery, readiness trends, anomaly detection, intensity impact, training load, progressive overload, recovery windows, temperature trends, sleep architecture, nutrition analysis
 - **What-If Scenario Simulator** -- Model next-day readiness based on sleep/workout/intensity inputs; multi-day training block planner with cascading projections
-- **ML Readiness Predictions** -- Next-day readiness forecast with GradientBoosting, walk-forward CV, feature importance breakdown
+- **Readiness Forecasting** -- Next-day forecast with temporal holdout evaluation, walk-forward model selection, and an automatic rolling-baseline fallback
 - **Health Alerts** -- Automated SNS notifications for anomalies (elevated RHR, low HRV, overtraining risk, declining readiness streaks)
 - **Morning Briefing** -- Daily actionable summary emailed after Gold refresh with freshness guard
 - **Automated Weekly Reports** -- Claude-narrated HTML/PDF reports with key metrics, delivered to S3 every Monday
 - **Correlation Discovery** -- Automated Spearman correlation scan across all metric pairs with statistical rigor
-- **Experiment Tracker** -- A/B test interventions (diet, training, sleep) with Bayesian + Difference-in-Differences analysis
+- **Experiment Tracker** -- Track interventions (diet, training, sleep) with Bayesian before/after and descriptive pre-trend analysis; results are explicitly labeled observational
 - **FHIR R4 Export** -- Healthcare-grade biometric export (HR, steps, HRV, VO2, weight, SpO2) for EHR interoperability
 - **14+ Gold Layer Views** -- Pre-computed analytics: energy states, workout optimization, overtraining risk, training load, sleep architecture, temperature trends
-- **Interactive Dashboard** -- 8-page Streamlit app with dark-themed Plotly charts, collapsible SQL, data export, PDF generation
+- **Interactive Dashboard** -- 9-page Streamlit app with dark-themed Plotly charts, collapsible SQL, data export, PDF generation
 - **Medallion Architecture** -- Bronze/Silver/Gold data layers with 7 CloudFormation stacks, Glue ETL, Lambda ingestion triggers
 - **Pipeline Orchestration** -- EventBridge-triggered chain: normalizers &rarr; Silver crawler &rarr; dbt Gold &rarr; Gold crawler &rarr; morning briefing
 
@@ -133,10 +135,10 @@ Deploying AI in healthcare, finance, or government requires proving your infrast
 | ETL | AWS Glue (PySpark), dbt-core 1.11 (dbt-athena) |
 | Query | Amazon Athena (Presto/Trino SQL) |
 | AI | Claude Sonnet 4.6 (NL-to-SQL, narrative generation, correlation interpretation) |
-| ML | scikit-learn (GradientBoosting, Ridge), Optuna, MLflow |
+| ML | scikit-learn, optional XGBoost/LightGBM, Optuna, MLflow |
 | Analytics | Python, pandas, SciPy, statsmodels (LOWESS) |
 | Visualization | Plotly, WeasyPrint (PDF export) |
-| App | Streamlit (8 pages) |
+| App | Streamlit (9 pages) |
 | Reports | Jinja2 HTML templates, Claude narrative generation |
 | Automation | LaunchD (macOS), EventBridge (AWS), shell scripts |
 | Healthcare | FHIR R4 Bundle export (Observation resources) |
@@ -172,7 +174,7 @@ bio-lakehouse/
 │   └── macros/tss_calculation.sql     # Canonical TSS formula
 ├── athena/views.sql                   # Legacy SQL views (kept for compatibility)
 ├── insights_engine/
-│   ├── app.py                         # Streamlit entry point (8 pages)
+│   ├── app.py                         # Streamlit entry point (9 pages)
 │   ├── config.py                      # AWS, Claude, chart configuration
 │   ├── core/
 │   │   ├── athena_client.py           # Query execution + 10-min cache
@@ -194,7 +196,7 @@ bio-lakehouse/
 │   │   └── what_if.py                # What-If scenario simulator
 │   ├── experiments/
 │   │   ├── tracker.py                 # Intervention CRUD (S3 JSON)
-│   │   ├── analyzer.py                # Bayesian + DiD analysis
+│   │   ├── analyzer.py                # Bayesian before/after + pre-trend analysis
 │   │   └── viz.py                     # Experiment visualizations
 │   ├── fhir/
 │   │   └── bundle_builder.py          # FHIR R4 Bundle export
@@ -225,7 +227,7 @@ bio-lakehouse/
 │   └── setup_folder_action.sh         # macOS Folder Action setup
 ├── run_daily_ingestion.sh             # Full 12-step pipeline script
 ├── run_streamlit.sh                   # Launch Streamlit (fast path)
-├── tests/                             # 221+ unit tests (13 test files)
+├── tests/                             # 250+ unit tests with CI
 ├── requirements.txt
 ├── requirements-frozen.txt            # 170 pinned deps for reproducibility
 └── pyproject.toml
@@ -248,14 +250,9 @@ export BIO_ATHENA_DATABASE="bio_gold"
 export BIO_S3_GOLD_BUCKET="bio-lakehouse-gold-<AWS_ACCOUNT_ID>"
 export BIO_ATHENA_RESULTS_BUCKET="bio-lakehouse-athena-results-<AWS_ACCOUNT_ID>"
 
-# 3. Deploy infrastructure (requires AWS credentials)
-for stack in bronze silver gold oura-ingest alerts morning-briefing pipeline-orchestrator; do
-  aws cloudformation deploy \
-    --template-file infrastructure/cloudformation/${stack}-stack.yaml \
-    --stack-name bio-lakehouse-${stack} \
-    --capabilities CAPABILITY_IAM \
-    --region us-east-1
-done
+# 3. Before any AWS infrastructure update
+# Review docs/SAFE_DEPLOYMENT.md and create a non-executing change set for
+# one stack and one instance at a time. Never bulk-deploy existing stacks.
 
 # 4. Run dbt to build Gold layer
 cd dbt_bio_lakehouse && dbt run && cd ..
@@ -270,11 +267,13 @@ python scripts/run_weekly_report.py --pdf  # Also generates PDF
 
 # 7. Run test suite
 pytest tests/ -v
-# → 221+ tests covering ETL, Athena, insights, FHIR, alerts, ML, NL-to-SQL
+# → 250+ tests covering ETL, Athena, insights, FHIR, alerts, ML, NL-to-SQL
 
 # 8. Run full daily pipeline (ingestion → ETL → Gold → Streamlit → Briefing)
 bash run_daily_ingestion.sh
 ```
+
+Infrastructure changes require a reviewed change set because the Bronze template corrects a DynamoDB key type that CloudFormation may classify as a replacement. See [Safe Deployment Gate](docs/SAFE_DEPLOYMENT.md).
 
 **Example Queries to Try in the Chat Interface:**
 - "What was my average readiness score last week?"
@@ -290,8 +289,9 @@ bash run_daily_ingestion.sh
 | **Insights** | 11 automated statistical analyses with Plotly visualizations |
 | **Weekly Report** | Claude-narrated HTML report with key metrics and trends |
 | **What-If** | Single-scenario simulator + multi-day training block planner |
+| **Coach** | Guardrailed 7-day training-plan generator using projected training load and observational recovery patterns |
 | **Predictions** | ML next-day readiness forecast with feature importance + backtest |
-| **Experiments** | A/B test interventions with Bayesian + Difference-in-Differences analysis |
+| **Experiments** | Track interventions with Bayesian before/after and descriptive pre-trend analysis (not causal inference) |
 | **Discoveries** | Automated correlation scan across all metric pairs |
 | **Export** | FHIR R4 Bundle export (6 metrics) for healthcare interoperability |
 
@@ -299,14 +299,14 @@ bash run_daily_ingestion.sh
 
 All benchmark questions tested end-to-end against live Athena data:
 
-| Question | View Used | Confidence | Time |
-|----------|-----------|-----------|------|
+| Question | View Used | Model-reported confidence | Time |
+|----------|-----------|---------------------------|------|
 | "What was my average readiness score last week?" | `dashboard_30day` | 95% | 19.8s |
 | "What's the correlation between my sleep and readiness?" | `readiness_performance_correlation` | 95% | 21.2s |
 | "Show me days where my readiness dropped below 70" | `energy_state` | 95% | 7.2s |
 | "Am I overtraining?" | `overtraining_risk` | 90% | 21.4s |
 
-The NL-to-SQL engine uses Claude Sonnet with live schema DDL injection, 10 few-shot examples, and Presto/Trino SQL rules. System prompt is hydrated at runtime with the actual Athena schema (~1,500 tokens).
+The confidence values above are generated by the language model and are not calibrated accuracy estimates. The NL-to-SQL engine uses Claude Sonnet with live schema DDL injection, few-shot examples, SQL validation, and Presto/Trino rules.
 
 ## Signature Insights
 
@@ -345,10 +345,10 @@ python scripts/run_weekly_report.py --local-only
 
 | Source | Data | Volume | Date Range |
 |--------|------|--------|------------|
-| Oura Ring | Sleep score, readiness, HRV, resting HR, activity, temperature | 120+ days | Nov 2025 -- Mar 2026 |
-| Peloton | Cycling/strength workouts, output (kJ), watts, heart rate | 863 workouts | May 2021 -- Mar 2026 |
-| Apple HealthKit | Resting HR, HRV, VO2 max, weight, body fat, workouts, mindfulness | 5,395 days | Sep 2020 -- Mar 2026 |
-| MyFitnessPal | Daily calories, macros, nutrition summary | Intermittent | Mar 2026 |
+| Oura Ring | Sleep score, readiness, HRV, resting HR, activity, temperature | 280+ daily predictor samples | Nov 2025 -- present |
+| Peloton | Cycling/strength workouts, output (kJ), watts, heart rate | 860+ workouts | May 2021 -- present |
+| Apple HealthKit | Resting HR, HRV, VO2 max, weight, body fat, workouts, mindfulness | Multi-year history | Sep 2020 -- present |
+| MyFitnessPal | Daily calories, macros, nutrition summary | Intermittent | Mar 2026 -- present |
 
 ## Gold Layer Views
 
@@ -464,22 +464,14 @@ EventBridge (daily 9am) → Lambda → Oura API v2 (7-day lookback)
 
 ### Test Coverage
 
-| Suite | Tests | Coverage |
-|-------|-------|----------|
-| ETL utilities | 11 | Glue helper functions, schema validation |
-| HealthKit parser | 37 | XML parsing, date filtering, CSV generation |
-| Ingestion pipeline | 12 | S3 upload, DynamoDB logging, file discovery |
-| Athena client | 9 | Query execution, caching, error handling |
-| FHIR builder | 48 | Bundle structure, Observation resources, coding |
-| Insights analyzers | 13 | All 11 analyzers, edge cases |
-| What-If simulator | 28 | Scenarios, multi-day, edge cases |
-| Health alerts | 15 | Threshold logic, SNS formatting |
-| Oura Lambda | 8 | Schema, encryption, date logic |
-| NL-to-SQL | 14 | Prompt construction, SQL validation |
-| Weekly report | 7 | Report generation, delivery |
-| Training load | 19 | TSS/CTL/ATL calculations |
-| ML predictor | Integrated | Walk-forward CV, feature selection |
-| **Total** | **221+** | |
+| Coverage area | Representative checks |
+|---------------|-----------------------|
+| Ingestion and ETL | Source detection, CSV/JSON validation, orchestration locks, Glue dispatch, HealthKit parsing |
+| Analytics and planning | Insight analyzers, training load, What-If scenarios, Coach guardrails, observational experiment analysis |
+| Application services | Athena caching, NL-to-SQL validation, alerts, morning briefing, weekly reports |
+| Data exchange and ML | FHIR bundles, leakage controls, temporal holdout evaluation, baseline fallback |
+| Infrastructure | CloudFormation notification, parameterization, and trigger defaults |
+| **Total** | **254 tests across 19 files**, automated in Python 3.12 CI |
 
 ### Ingestion Monitoring
 
@@ -529,10 +521,10 @@ Bronze/Silver/Gold provides clear separation of concerns: raw ingestion &rarr; n
 Serverless pay-per-query model fits a personal project's intermittent query pattern. No cluster management overhead. Presto/Trino SQL is production-grade and portable.
 
 **Why Claude for NL-to-SQL?**
-Tested multiple approaches (GPT-4, Llama 3, rule-based parsers). Claude Sonnet 4 provided the best balance of accuracy (95% on benchmarks), reasoning transparency, and cost (~$0.02/query with result caching).
+Claude Sonnet is used for schema-aware SQL generation and narrative synthesis. The repository records example end-to-end timings, but it does not claim a calibrated accuracy rate or a controlled cross-model benchmark.
 
 **Why PySpark in Glue?**
-Even with small data volumes (~MB), PySpark demonstrates ETL patterns that scale to TB/PB. Same code would work on larger datasets with minimal refactoring. Shows understanding of distributed computing primitives.
+Even at the current small data volume, PySpark demonstrates distributed ETL patterns. The design can scale beyond the current workload, although larger-scale performance has not been benchmarked here.
 
 **Why dbt for Gold Layer?**
 dbt provides version-controlled, testable SQL transformations with dependency management. The `dbt_bio_lakehouse` project defines all Gold views as models, making the analytics layer reproducible and auditable. Runs via a Glue Python shell job.
@@ -557,9 +549,9 @@ All correlations report p-values and sample sizes. Uses non-parametric tests (Ma
 - Health alerts &rarr; Automated monitoring and anomaly detection for business KPIs
 - Morning briefing &rarr; Executive daily digest with freshness guarantees
 - Weekly automated reports &rarr; Scheduled executive dashboards
-- FHIR R4 export &rarr; Healthcare data interoperability (HL7/FHIR compliance)
-- DynamoDB ingestion log &rarr; Data governance audit trail for SOC 2 compliance
-- Lambda + Glue ETL &rarr; Serverless data pipelines (scales to TB/PB with no refactoring)
+- FHIR R4 export &rarr; Healthcare data interoperability pattern
+- DynamoDB ingestion log &rarr; Operational evidence that can support a broader audit program
+- Lambda + Glue ETL &rarr; Serverless data-pipeline pattern with independently scalable stages
 - Pipeline orchestrator &rarr; Event-driven workflow management (Step Functions alternative)
 - What-If simulator &rarr; Decision support systems for planning and forecasting
 
@@ -569,11 +561,11 @@ The patterns here -- event-driven ingestion, metadata-driven governance, AI-powe
 
 ## Project Status
 
-**Current State**: Fully operational
+**Current State**: Primary instance operational; second-instance hardening and remaining stack parity are staged for reviewed deployment
 **Infrastructure**: 7 CloudFormation stacks deployed in AWS us-east-1
 **Data Freshness**: Daily automated pipeline (HealthKit, Peloton, MFP local + Oura Lambda)
 **Monitoring**: CloudWatch Logs for Lambda/Glue, DynamoDB ingestion log, Streamlit query log, health check script
-**Testing**: 221+ unit tests across 13 suites
+**Testing**: 250+ unit tests with automated Python 3.12 CI
 
 **Future Enhancements** (see [docs/PRD.md](docs/PRD.md) for full roadmap):
 - Multi-model NL-to-SQL comparison (benchmark Claude vs GPT-4 Turbo vs Gemini Pro)
@@ -586,9 +578,9 @@ The patterns here -- event-driven ingestion, metadata-driven governance, AI-powe
 
 Building a data lakehouse on real biometric data surfaced engineering problems that synthetic demos never encounter. These lessons shaped the project's architecture and are directly transferable to production AI systems.
 
-### Why the First ML Model Failed
+### Why the Readiness Model Is Gated
 
-The initial readiness predictor used GradientBoosting with 200 estimators and max depth 4 -- wildly overparameterized for 88 training samples. The result: **R^2 = -0.556**, worse than predicting the mean. The fix was systematic: benchmark against a naive baseline (7-day rolling average), match model complexity to sample size (Ridge regression with strong regularization), and use walk-forward cross-validation with more folds. **Lesson:** Always include a naive baseline. If your model can't beat "predict the average," it's learning noise, not signal.
+The initial readiness predictor used an overparameterized GradientBoosting model on 88 training samples and reported **R^2 = -0.556**. The rebuilt pipeline now keeps the newest 20% of observations untouched, performs feature selection and tuning only inside time-ordered development folds, and compares the final model with a 7-day rolling baseline. On the latest 57-day holdout, the selected LightGBM model had MAE 4.815 versus 4.045 for the baseline, so production inference automatically uses the baseline. **Lesson:** A model is not production-ready merely because it won model selection; it must beat a simple baseline on genuinely unseen future data.
 
 ### Bronze CSV Column Order Bug
 
@@ -604,11 +596,11 @@ Same-day readiness contributors (recovery index, resting heart rate score) corre
 
 ### Small-Sample ML Strategy
 
-With only ~90 samples, ensemble methods with hundreds of parameters learn noise. Linear models with strong regularization (Ridge, ElasticNet) consistently outperformed tree-based models in walk-forward CV. The pipeline now includes sample size warnings and automatically selects conservative architectures. **Lesson:** Model complexity should scale with data volume. More parameters does not equal better predictions.
+Time-series candidate ranking is confined to the development period, while a final temporal holdout is evaluated only once. The current run shows why both gates matter: LightGBM led development cross-validation but lost to the rolling baseline on the holdout. The app exposes that result, labels uncertainty as an empirical error range, and refuses to serve the weaker ML estimate. **Lesson:** Model complexity and selection scores are secondary to out-of-sample performance and an explicit fallback policy.
 
-### CTL Was Invisible at N=87
+### Long-Window Features Need History
 
-The 42-day chronic training load (CTL) -- which became the #1 feature at N=119 -- wasn't even selected by feature selection at N=87. The reason: with only 87 days of Oura data, only ~2 full CTL cycles existed, which is insufficient for the exponential moving average to demonstrate predictive power. At N=119 (3+ cycles), CTL jumped to 20.8% importance and fundamentally changed the model's story from "yesterday's stress" to "weeks of consistent training." **Lesson:** Time-series ML features with long lookback windows (42 days for CTL) require patience with data accumulation. Premature feature engineering at small N will miss the most important signals -- let the data grow and retrain regularly.
+The 42-day chronic training load (CTL) was not selected when only 87 days were available, but it entered later models after more full lookback cycles accumulated. Its presence is useful evidence that the feature can now be estimated, not proof that training load causes readiness changes. **Lesson:** Long-window features need enough complete history, and feature importance should remain descriptive rather than causal.
 
 ### Desktop I/O Killed Startup
 
@@ -632,62 +624,28 @@ Building and running this system daily for 6+ weeks revealed architectural choic
 
 ## Readiness Predictor
 
-A next-day readiness prediction pipeline using GradientBoostingRegressor with automated feature selection, walk-forward cross-validation, and Optuna hyperparameter tuning. The model retrains as data accumulates, with feature importance evolving as sample size grows.
+The next-day readiness pipeline compares Ridge, ElasticNet, GradientBoosting, XGBoost, and LightGBM candidates. Feature selection occurs separately inside each walk-forward training fold, Optuna tuning is limited to development data, and the newest 20% of observations remain untouched until one final evaluation.
 
-### Model Version History
+### Current Evaluation (N=285)
 
-| Version | Samples | MAE | Top Feature | Features Selected | max_depth | Date |
-|---------|---------|-----|-------------|-------------------|-----------|------|
-| v1 | 87 | 5.00 | TSB (26.4%) | 6 | 3 | Feb 2026 |
-| v2 | 119 | 4.65 | CTL (20.8%) | 8 | 2 | Mar 2026 |
+| Evaluation | ML candidate | 7-day rolling baseline |
+|------------|--------------|------------------------|
+| Development walk-forward MAE | 4.38 | 4.69 |
+| 57-day holdout MAE | 4.815 | 4.045 |
+| 57-day holdout RMSE | 6.485 | 5.335 |
+| 57-day holdout R² | -0.418 | 0.040 |
 
-The progression tells a story: as data grew from 87 to 119 samples, the model simplified (max_depth 3&rarr;2) while improving accuracy (MAE 5.0&rarr;4.65). The model's explanation of readiness shifted from "yesterday's training stress" to "chronic training load management over weeks."
+LightGBM won development model selection but did not generalize better than the baseline on the held-out period (July 11 through September 5, 2026). The saved metrics therefore set `model_recommended=false`, and inference automatically serves the rolling baseline rather than the weaker ML estimate.
 
-### Current Model (v2, N=119)
+The displayed 80% range is calibrated from the 57 held-out baseline errors (±7.14 readiness points). It is labeled as an empirical error range rather than a model confidence interval. The out-of-sample backtest contains development walk-forward predictions and the untouched holdout only; it no longer mixes in-sample fitted values into performance charts.
 
-**Metrics:**
-- MAE: 4.65 (beats naive 7-day average baseline of 4.7)
-- Cross-validation: Walk-forward, 12 folds, 7-day test windows, min 30-sample training set
-- R^2: Negative (expected -- the model's value at this sample size is interpretable feature importance for training decisions, not raw prediction lift over naive forecasting. As N approaches 200+, we expect the accuracy gap to widen as the model captures more complex feature interactions.)
+### Retraining Policy
 
-**Feature Importance:**
-| Feature | Importance | What It Means |
-|---------|-----------|---------------|
-| CTL (chronic training load, 42-day) | 20.8% | Consistent training volume over weeks matters most |
-| TSB (training stress balance) | 20.5% | Freshness vs fatigue balance drives next-day readiness |
-| Resting heart rate | 18.8% | Autonomic recovery signal |
-| HRV 2-day change | 13.1% | Autonomic stress dynamics (direction of change, not absolute level) |
-| Day of week | 10.5% | Weekly periodization patterns (higher after rest days) |
-| Readiness 7-day avg | 10.4% | Momentum/baseline |
-| Sleep score 3-day avg | 4.4% | Recent sleep quality |
-| Deep sleep score | 1.4% | Marginal contributor |
-
-**Key insight:** CTL + TSB = 41% of readiness variance. Your readiness is primarily driven by training load management over weeks, not any single day's metrics.
-
-### What Changed Between v1 and v2
-
-| Feature | v1 (N=87) | v2 (N=119) | Explanation |
-|---------|-----------|------------|-------------|
-| CTL | not selected | **#1 (20.8%)** | At N=87, only ~2 CTL cycles (42-day EMA) existed. At N=119, 3+ cycles made CTL's predictive power visible. |
-| Day of week | not selected | **10.5%** | Weekly periodization patterns only emerge with enough weekends in the dataset. |
-| Sleep score 3d avg | not selected | **4.4%** | Replaced `sleep_debt_7d` -- short-term sleep quality predicts better than accumulated debt. |
-| HRV 2-day change | 10.1% (MI=0.04) | **13.1%** | Initially flagged as borderline noise by MI scoring, but importance increased with more samples. |
-| sleep_debt_7d | 19.5% (#2) | **dropped** | Replaced by sleep_score_3d_avg with more data. |
-| tss (daily) | 12.8% | **dropped** | Replaced by CTL -- long-term load signal superseded daily training stress. |
-| hrv_balance_score | 0% | **dropped** | Confirmed zero predictive value, removed by feature selection. |
-
-### Honest Limitations
-
-- MAE of 4.65 vs naive baseline of 4.7 is a 1% margin. The model's primary value at current sample size is **interpretable feature importance for training decisions**, not raw prediction lift over naive forecasting.
-- `deep_sleep_score` contributes only 1.4% -- likely redundant with sleep_score and will probably be dropped at N=150+.
-- R^2 remains negative. This is expected with ~120 samples of inherently noisy biometric data. The model consistently beats the baseline on MAE (the metric that matters for actionable predictions).
-
-### Path Forward
-
-- Target: 200+ samples for stable R^2 > 0 and meaningful prediction lift
-- Timeline: ~10 weeks at current daily ingestion rate
-- Plan: Retrain monthly, monitor feature importance drift, let the model decide what stays
-- Connection to Gold views: The `overtraining_risk` view's logic should be revisited to weight CTL/TSB more heavily, aligning with what the ML model learned
+- Keep feature selection, candidate comparison, and hyperparameter tuning inside the development period.
+- Evaluate the selected candidate once on the temporal holdout and compare it with the rolling baseline.
+- Serve the ML model only when it beats the baseline on holdout MAE; otherwise retain the baseline fallback.
+- Treat feature importance as model diagnostics, not evidence that any input causes readiness changes.
+- Retrain with `scripts/retrain_model.sh`; set `ENV_FILE=.env.<instance>` to keep databases, artifacts, and MLflow history isolated by instance.
 
 ---
 

@@ -17,7 +17,11 @@ from plotly.subplots import make_subplots
 from scipy import stats
 
 from insights_engine.config import CHART_CONFIG
-from insights_engine.experiments.analyzer import BayesianResult, CorrelationResult, DiDResult
+from insights_engine.experiments.analyzer import (
+    BayesianResult,
+    CorrelationResult,
+    InterruptedTimeSeriesResult,
+)
 from insights_engine.viz import theme as _theme
 
 
@@ -195,7 +199,7 @@ def posterior_plot(
     # Effect line
     fig.add_vline(
         x=effect, line_dash="solid", line_color=_palette["success"],
-        annotation_text=f"Effect: {effect:+.2f}",
+        annotation_text=f"Observed change: {effect:+.2f}",
         annotation_position="top right",
     )
 

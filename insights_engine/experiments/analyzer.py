@@ -1,8 +1,9 @@
 """
-Experiment Analyzer — Bayesian & Difference-in-Differences Analysis
+Experiment Analyzer — Bayesian Before/After & Interrupted Time-Series Analysis
 
 Primary: Normal-Normal conjugate Bayesian analysis (scipy only, no PyMC)
-Secondary: Difference-in-differences with parallel trends validation
+Secondary: single-series pre-trend extrapolation. Neither analysis establishes
+causality because there is no randomized assignment or untreated control group.
 """
 
 from __future__ import annotations
@@ -35,14 +36,14 @@ class BayesianResult:
 
 
 @dataclass
-class DiDResult:
-    """Result of Difference-in-Differences analysis."""
+class InterruptedTimeSeriesResult:
+    """Descriptive deviation from an extrapolated pre-intervention trend."""
     pre_trend_slope: float
     pre_trend_r2: float
     counterfactual_post_mean: float
     actual_post_mean: float
-    did_effect: float
-    parallel_trends_valid: bool
+    estimated_deviation: float
+    pretrend_fit_reliable: bool
     warning: str | None
 
 
@@ -149,11 +150,11 @@ def bayesian_analysis(
 
     # Verdict
     if abs(cohens_d) < 0.2:
-        verdict = "Negligible effect"
+        verdict = "Negligible observed change"
     elif ci_low > 0:
-        verdict = "Likely positive effect" if cohens_d > 0.5 else "Small positive effect"
+        verdict = "Likely positive association" if cohens_d > 0.5 else "Small positive association"
     elif ci_high < 0:
-        verdict = "Likely negative effect" if cohens_d < -0.5 else "Small negative effect"
+        verdict = "Likely negative association" if cohens_d < -0.5 else "Small negative association"
     else:
         verdict = "Inconclusive — effect crosses zero"
 
@@ -172,16 +173,18 @@ def bayesian_analysis(
     )
 
 
-def did_analysis(
+def interrupted_time_series_analysis(
     pre_df: pd.DataFrame,
     post_df: pd.DataFrame,
     metric_col: str,
-) -> DiDResult:
+) -> InterruptedTimeSeriesResult:
     """
-    Difference-in-Differences analysis.
+    Single-series interrupted time-series estimate.
 
     Fits a linear trend on the pre-period, extrapolates counterfactual,
-    then computes the DiD effect.
+    then reports the post-period deviation. This is descriptive: without a
+    contemporaneous untreated control it is not difference-in-differences and
+    cannot separate the intervention from seasonality or other changes.
     """
     warning = None
 
@@ -190,22 +193,27 @@ def did_analysis(
     pre_x = np.arange(len(pre_vals))
 
     if len(pre_vals) < 3:
-        return DiDResult(
+        return InterruptedTimeSeriesResult(
             pre_trend_slope=0.0, pre_trend_r2=0.0,
             counterfactual_post_mean=float(np.mean(pre_vals)) if len(pre_vals) > 0 else 0.0,
             actual_post_mean=float(np.mean(post_df[metric_col].values)),
-            did_effect=0.0,
-            parallel_trends_valid=False,
-            warning="Too few pre-period observations (< 3) for DiD analysis",
+            estimated_deviation=0.0,
+            pretrend_fit_reliable=False,
+            warning="Too few pre-period observations (< 3) for trend analysis",
         )
 
     slope, intercept, r_value, _, _ = stats.linregress(pre_x, pre_vals)
     r2 = r_value ** 2
 
-    # Parallel trends validation
-    parallel_valid = r2 > 0.3
-    if not parallel_valid:
-        warning = "Pre-period trend is non-linear — DiD results may be unreliable"
+    pretrend_reliable = bool(r2 > 0.3)
+    limitation = (
+        "Descriptive estimate only: there is no untreated control group, so "
+        "the deviation must not be interpreted as causal."
+    )
+    if not pretrend_reliable:
+        warning = f"The linear pre-trend fit is weak. {limitation}"
+    else:
+        warning = limitation
 
     # Counterfactual: extrapolate pre-period trend into post-period
     n_post = len(post_df)
@@ -214,17 +222,23 @@ def did_analysis(
     counterfactual_mean = float(np.mean(counterfactual))
 
     actual_post_mean = float(np.mean(post_df[metric_col].values))
-    did_effect = actual_post_mean - counterfactual_mean
+    estimated_deviation = actual_post_mean - counterfactual_mean
 
-    return DiDResult(
+    return InterruptedTimeSeriesResult(
         pre_trend_slope=round(float(slope), 4),
         pre_trend_r2=round(float(r2), 3),
         counterfactual_post_mean=round(counterfactual_mean, 2),
         actual_post_mean=round(actual_post_mean, 2),
-        did_effect=round(did_effect, 2),
-        parallel_trends_valid=parallel_valid,
+        estimated_deviation=round(estimated_deviation, 2),
+        pretrend_fit_reliable=pretrend_reliable,
         warning=warning,
     )
+
+
+# Backward-compatible aliases for older imports. New UI and code use the
+# statistically accurate interrupted-time-series terminology above.
+DiDResult = InterruptedTimeSeriesResult
+did_analysis = interrupted_time_series_analysis
 
 
 # Available metrics for experiment analysis (Bayesian intervention)

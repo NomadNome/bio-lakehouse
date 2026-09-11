@@ -115,7 +115,11 @@ class WeeklyReportGenerator:
     def client(self):
         if self._client is None:
             import anthropic
-            self._client = anthropic.Anthropic(api_key=self._api_key)
+            self._client = anthropic.Anthropic(
+                api_key=self._api_key,
+                timeout=CLAUDE_CONFIG["weekly_report_timeout_seconds"],
+                max_retries=1,
+            )
         return self._client
 
     def generate(self, week_ending: date = None) -> ReportResult:
@@ -262,6 +266,12 @@ class WeeklyReportGenerator:
             avg_r = row.get("avg_readiness")
             avg_s = row.get("avg_sleep")
 
+            def safe_int(value, default=0):
+                """Convert Athena numeric output without failing on NULL/NaN."""
+                if value is None or pd.isna(value):
+                    return default
+                return int(value)
+
             def trend_class(val, good_threshold=82, bad_threshold=70):
                 if val is None or pd.isna(val):
                     return ""
@@ -275,9 +285,9 @@ class WeeklyReportGenerator:
             metrics = [
                 {"value": f"{avg_r:.0f}" if pd.notna(avg_r) else "—", "label": "Avg Readiness", "trend_class": trend_class(avg_r)},
                 {"value": f"{avg_s:.0f}" if pd.notna(avg_s) else "—", "label": "Avg Sleep Score", "trend_class": trend_class(avg_s, 85, 70)},
-                {"value": f"{int(row.get('workout_days', 0))}", "label": "Workout Days", "trend_class": ""},
-                {"value": f"{int(row.get('total_output', 0)):,}", "label": "Total Output (kJ)", "trend_class": ""},
-                {"value": f"{int(row.get('data_days', 0))}/7", "label": "Data Days", "trend_class": ""},
+                {"value": f"{safe_int(row.get('workout_days'))}", "label": "Workout Days", "trend_class": ""},
+                {"value": f"{safe_int(row.get('total_output')):,}", "label": "Total Output (kJ)", "trend_class": ""},
+                {"value": f"{safe_int(row.get('data_days'))}/7", "label": "Data Days", "trend_class": ""},
             ]
 
             # HealthKit vitals metrics (if available)
@@ -298,7 +308,7 @@ class WeeklyReportGenerator:
             avg_mindfulness = row.get("avg_mindfulness")
             mindfulness_days = row.get("mindfulness_days", 0)
             if pd.notna(avg_mindfulness) and float(avg_mindfulness) > 0:
-                metrics.append({"value": f"{float(avg_mindfulness):.0f} min/day ({int(mindfulness_days)} days)", "label": "Mindfulness", "trend_class": ""})
+                metrics.append({"value": f"{float(avg_mindfulness):.0f} min/day ({safe_int(mindfulness_days)} days)", "label": "Mindfulness", "trend_class": ""})
 
             avg_calories = row.get("avg_calories")
             avg_protein = row.get("avg_protein")
@@ -307,8 +317,8 @@ class WeeklyReportGenerator:
                 avg_carbs = row.get("avg_carbs", 0)
                 avg_fat = row.get("avg_fat", 0)
                 cal_val = f"{float(avg_calories):.0f}"
-                macro_detail = f"{int(avg_protein or 0)}P / {int(avg_carbs or 0)}C / {int(avg_fat or 0)}F"
-                metrics.append({"value": f"{cal_val} cal ({macro_detail})", "label": f"Avg Nutrition ({int(nutrition_days)} days)", "trend_class": ""})
+                macro_detail = f"{safe_int(avg_protein)}P / {safe_int(avg_carbs)}C / {safe_int(avg_fat)}F"
+                metrics.append({"value": f"{cal_val} cal ({macro_detail})", "label": f"Avg Nutrition ({safe_int(nutrition_days)} days)", "trend_class": ""})
 
             return metrics
         except Exception as e:
@@ -392,21 +402,39 @@ Here are the analysis results from each insight module:
 
 Write the report following the structure in your instructions. Focus on what CHANGED this week vs last week and what's actionable."""
 
-        response = self.client.messages.create(
-            model=self.model,
-            # Extra headroom: adaptive thinking tokens count against
-            # max_tokens on Sonnet 5+, so a tight budget risks a
-            # thinking-only response with no narrative text.
-            max_tokens=3000,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
+        def request(prompt: str) -> str | None:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=CLAUDE_CONFIG["weekly_report_max_tokens"],
+                # Weekly narration does not need extended reasoning. Disabling
+                # it guarantees the output allowance is reserved for prose and
+                # prevents multi-minute thinking-only responses.
+                thinking={"type": "disabled"},
+                system=system_prompt,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = "\n".join(
+                block.text.strip()
+                for block in response.content
+                if block.type == "text" and block.text.strip()
+            )
+            return text or None
+
+        narrative = request(user_prompt)
+        if narrative:
+            return narrative
+
+        # One bounded retry handles an anomalous empty response without
+        # silently publishing a report with no executive summary.
+        retry_prompt = (
+            user_prompt
+            + "\n\nReturn only the concise final report narrative now. "
+              "Do not include analysis, tool calls, or preamble."
         )
-        # Sonnet 5+ runs adaptive thinking by default, so content[0] can be a
-        # ThinkingBlock rather than the TextBlock — find the text block explicitly.
-        for block in response.content:
-            if block.type == "text":
-                return block.text.strip()
-        raise ValueError("No text block in Claude response (only thinking/tool blocks)")
+        narrative = request(retry_prompt)
+        if narrative:
+            return narrative
+        raise ValueError("Claude returned no narrative text after one retry")
 
     def _render_html(
         self,

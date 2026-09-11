@@ -9,6 +9,10 @@ Parameters:
   ProjectPrefix:
     Type: String
     Default: bio-lakehouse
+  PipelineOrchestratorCodeS3Key:
+    Type: String
+    Default: lambda/pipeline_orchestrator.zip
+    Description: Versioned S3 key for the pipeline orchestrator Lambda package
 
 Resources:
 
@@ -47,6 +51,11 @@ Resources:
                 Action:
                   - 'lambda:InvokeFunction'
                 Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectPrefix}-morning-briefing'
+              # Read the short-lived lock written by the local full pipeline.
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                Resource: !Sub 'arn:aws:s3:::${ProjectPrefix}-bronze-${AWS::AccountId}/control/manual-pipeline.lock'
       Tags:
         - Key: Project
           Value: !Ref ProjectPrefix
@@ -65,7 +74,7 @@ Resources:
       MemorySize: 256
       Code:
         S3Bucket: !Sub '${ProjectPrefix}-gold-${AWS::AccountId}'
-        S3Key: lambda/pipeline_orchestrator.zip
+        S3Key: !Ref PipelineOrchestratorCodeS3Key
       Environment:
         Variables:
           SILVER_CRAWLER: !Sub '${ProjectPrefix}-silver-crawler'
@@ -74,6 +83,7 @@ Resources:
           MORNING_BRIEFING_FN: !Sub '${ProjectPrefix}-morning-briefing'
           HK_NORMALIZER: !Sub '${ProjectPrefix}-healthkit-normalizer'
           PELOTON_NORMALIZER: !Sub '${ProjectPrefix}-peloton-normalizer'
+          BRONZE_BUCKET: !Sub '${ProjectPrefix}-bronze-${AWS::AccountId}'
       Tags:
         - Key: Project
           Value: !Ref ProjectPrefix

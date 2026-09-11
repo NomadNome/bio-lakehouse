@@ -56,7 +56,7 @@ def fetch_daily_data(token, data_type, start_date, end_date):
             if e.code == 401:
                 raise ValueError(
                     "Oura API returned 401 Unauthorized. "
-                    "Check that /bio-lakehouse/oura-api-token is valid."
+                    "Check that the configured Oura token parameter is valid."
                 )
             if e.code == 429:
                 print(f"Oura API rate limited (429) for {data_type}. Will retry next run.")

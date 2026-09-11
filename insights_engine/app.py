@@ -1177,12 +1177,12 @@ elif page == "🔮 What-If":
                 # Recommendation
                 st.info(result.recommendation)
 
-                # Confidence note
+                # Historical variability note
                 sd = result.supporting_data
                 with st.expander("Statistical Notes"):
                     st.caption(
-                        f"Confidence range: {result.confidence_range[0]:.0f}–{result.confidence_range[1]:.0f} "
-                        f"(±1 std from your historical '{sd.get('sleep_bucket', '?')}' sleep bucket, "
+                        f"Historical variability range: {result.confidence_range[0]:.0f}–{result.confidence_range[1]:.0f} "
+                        f"(prediction ±1 observed standard deviation in your '{sd.get('sleep_bucket', '?')}' sleep bucket, "
                         f"n={sd.get('bucket_n', '?')})"
                     )
                     if sd.get("regression_r") is not None:
@@ -1317,9 +1317,10 @@ elif page == "🔮 What-If":
                     f"Starting CTL: {mdr.starting_ctl:.0f} | Starting ATL: {mdr.starting_atl:.0f}"
                 )
                 st.caption(
-                    "Confidence bands widen by 5% per day to reflect increasing uncertainty. "
+                    "Scenario ranges widen by 5% per day to reflect increasing uncertainty; "
+                    "they are not calibrated confidence intervals. "
                     "Readiness predictions use the same sleep→readiness regression and "
-                    "workout-type adjustments as the Single Scenario tab."
+                    "observational workout-intensity adjustments as the Single Scenario tab."
                 )
                 st.caption(
                     "TSS estimates are approximations based on workout type and intensity. "
@@ -1497,6 +1498,11 @@ elif page == "🎯 Predictions":
             f"Model trained on {_metrics.get('n_samples', '?')} samples (< 50) "
             "— predictions may be unreliable. Consider collecting more data."
         )
+    if _metrics.get("model_recommended") is False:
+        st.warning(
+            "The latest model did not beat the rolling-average baseline on its "
+            "untouched holdout period. Treat the prediction as experimental."
+        )
 
     @st.cache_data(ttl=600, show_spinner="Running prediction...")
     def _cached_prediction():
@@ -1505,7 +1511,8 @@ elif page == "🎯 Predictions":
         from models.readiness_predictor.predict import predict_next_day
         return predict_next_day()
 
-    if not model_path.exists():
+    baseline_selected = _metrics.get("prediction_source") == "rolling_7d_baseline"
+    if not model_path.exists() and not baseline_selected:
         st.warning(
             "No trained model found. Run `python -m models.readiness_predictor.train` first."
         )
@@ -1558,11 +1565,24 @@ elif page == "🎯 Predictions":
             with col_metrics:
                 st.metric("Predicted Score", f"{predicted:.0f}")
                 if conf:
-                    st.metric("Confidence Range", f"{conf.get('range_low', '?')} - {conf.get('range_high', '?')}")
-                    st.metric("Model MAE", f"{conf.get('cv_mae', '?')}")
-                    st.metric("Model R\u00b2", f"{conf.get('cv_r2', '?')}")
+                    if conf.get("range_low") is not None:
+                        st.metric(
+                            "Empirical 80% Error Range",
+                            f"{conf['range_low']} - {conf['range_high']}",
+                        )
+                    st.metric("Holdout MAE", f"{conf.get('holdout_mae', '?')}")
+                    st.metric("Holdout R\u00b2", f"{conf.get('holdout_r2', '?')}")
                     best_model_name = conf.get("best_model", _metrics.get("best_model", "?"))
-                    st.caption(f"Model: **{best_model_name}** | Trained on {conf.get('n_training_samples', '?')} days")
+                    source = pred_result.get("prediction_source", "model")
+                    source_label = (
+                        "7-day rolling baseline"
+                        if source == "rolling_7d_baseline"
+                        else best_model_name
+                    )
+                    st.caption(
+                        f"Prediction source: **{source_label}** | "
+                        f"Trained/evaluated on {conf.get('n_training_samples', '?')} days"
+                    )
 
                 # Freshness: show current input features
                 inputs = pred_result.get("input_features", {})
@@ -1766,12 +1786,13 @@ elif page == "🎯 Predictions":
 elif page == "🧪 Experiments":
     st.header("Experiment Tracker")
     st.caption(
-        "Log interventions (supplements, training changes, diet, etc.) and analyze their causal effects."
+        "Log interventions and compare outcomes before and after. Results are "
+        "observational associations, not proof that an intervention caused a change."
     )
 
     from insights_engine.experiments.tracker import ExperimentStore, Intervention, InterventionType
     from insights_engine.experiments.analyzer import (
-        get_pre_post_data, bayesian_analysis, did_analysis, ANALYSIS_METRICS,
+        get_pre_post_data, bayesian_analysis, interrupted_time_series_analysis, ANALYSIS_METRICS,
         correlation_analysis, CORRELATION_INPUT_METRICS, CORRELATION_OUTCOME_METRICS,
     )
     from insights_engine.experiments import viz as exp_viz
@@ -1891,7 +1912,7 @@ elif page == "🧪 Experiments":
             all_for_analysis = []
 
         if not all_for_analysis:
-            st.info("Log an intervention first, then come back here to analyze its effect.")
+            st.info("Log an intervention first, then come back here to analyze the observed change.")
         else:
             sel_intv_name = st.selectbox(
                 "Select Intervention",
@@ -1926,7 +1947,7 @@ elif page == "🧪 Experiments":
 
                             st.markdown("### Bayesian Analysis")
                             bayes_cols = st.columns(4)
-                            bayes_cols[0].metric("Effect", f"{bayes.posterior_mean_effect:+.2f}")
+                            bayes_cols[0].metric("Estimated change", f"{bayes.posterior_mean_effect:+.2f}")
                             bayes_cols[1].metric("P(Positive)", f"{bayes.prob_positive:.1%}")
                             bayes_cols[2].metric("Cohen's d", f"{bayes.cohens_d:.2f}")
                             bayes_cols[3].metric("Verdict", bayes.verdict)
@@ -1956,24 +1977,36 @@ elif page == "🧪 Experiments":
                             post_fig = exp_viz.posterior_plot(bayes, dark=_dark)
                             st.plotly_chart(post_fig, width="stretch")
 
-                            # ── DiD Analysis ──
-                            st.markdown("### Difference-in-Differences")
-                            did = did_analysis(pre_df, post_df, sel_metric)
+                            st.caption(
+                                "Before/after comparisons can be influenced by seasonality, "
+                                "other behavior changes, regression to the mean, and measurement noise."
+                            )
 
-                            if did.warning:
-                                st.warning(did.warning)
+                            # ── Interrupted time-series estimate ──
+                            st.markdown("### Pre-Trend Deviation (Descriptive)")
+                            trend_result = interrupted_time_series_analysis(
+                                pre_df, post_df, sel_metric
+                            )
 
-                            did_cols = st.columns(3)
-                            did_cols[0].metric("DiD Effect", f"{did.did_effect:+.2f}")
-                            did_cols[1].metric("Pre-Trend R²", f"{did.pre_trend_r2:.3f}")
-                            did_cols[2].metric(
-                                "Parallel Trends",
-                                "Valid" if did.parallel_trends_valid else "Invalid",
+                            if trend_result.warning:
+                                st.warning(trend_result.warning)
+
+                            trend_cols = st.columns(3)
+                            trend_cols[0].metric(
+                                "Estimated deviation",
+                                f"{trend_result.estimated_deviation:+.2f}",
+                            )
+                            trend_cols[1].metric(
+                                "Pre-Trend R²", f"{trend_result.pre_trend_r2:.3f}"
+                            )
+                            trend_cols[2].metric(
+                                "Pre-Trend Fit",
+                                "Usable" if trend_result.pretrend_fit_reliable else "Weak",
                             )
                             st.caption(
-                                f"Counterfactual post mean: {did.counterfactual_post_mean:.1f} | "
-                                f"Actual post mean: {did.actual_post_mean:.1f} | "
-                                f"Pre-trend slope: {did.pre_trend_slope:.4f}/day"
+                                f"Projected post mean: {trend_result.counterfactual_post_mean:.1f} | "
+                                f"Actual post mean: {trend_result.actual_post_mean:.1f} | "
+                                f"Pre-trend slope: {trend_result.pre_trend_slope:.4f}/day"
                             )
 
                     except Exception as e:

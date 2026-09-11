@@ -31,6 +31,11 @@ CLAUDE_CONFIG = {
     # multi-CTE segmented-regression query). 4096 still intermittently
     # truncated the SQL-translation JSON mid-string; give real headroom.
     "max_tokens": 8192,
+    # Weekly narration is a synthesis task, so extended thinking only adds
+    # latency and can consume the entire output allowance before any report
+    # text is emitted. Keep the response bounded and reserve it for prose.
+    "weekly_report_max_tokens": 2500,
+    "weekly_report_timeout_seconds": 120,
 }
 
 # Chart Styling

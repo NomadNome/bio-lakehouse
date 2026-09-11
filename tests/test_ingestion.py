@@ -22,6 +22,24 @@ os.environ["PELOTON_GLUE_JOB"] = "bio-lakehouse-peloton-normalizer"
 
 HANDLER_PATH = Path(__file__).parent.parent / "lambda" / "ingestion_trigger" / "handler.py"
 
+OURA_READINESS_HEADERS = [
+    "id",
+    "day",
+    "score",
+    "timestamp",
+    "temperature_deviation",
+    "temperature_trend_deviation",
+    "contributors_activity_balance",
+    "contributors_body_temperature",
+    "contributors_hrv_balance",
+    "contributors_previous_day_activity",
+    "contributors_previous_night",
+    "contributors_recovery_index",
+    "contributors_resting_heart_rate",
+    "contributors_sleep_balance",
+    "contributors_sleep_regularity",
+]
+
 
 def load_handler():
     """Load the handler module using importlib to avoid 'lambda' keyword conflict."""
@@ -61,7 +79,7 @@ class TestValidateCsvHeaders(unittest.TestCase):
         self.handler.s3 = self.mock_s3
 
     def test_valid_oura_readiness_headers(self):
-        csv_content = "id,day,score,timestamp,contributors_activity_balance\ndata..."
+        csv_content = ",".join(OURA_READINESS_HEADERS) + "\ndata..."
         self.mock_s3.get_object.return_value = {
             "Body": MagicMock(read=MagicMock(return_value=csv_content.encode("utf-8")))
         }
@@ -84,6 +102,17 @@ class TestValidateCsvHeaders(unittest.TestCase):
         assert result["valid"] is False
         assert "error" in result
 
+    def test_valid_legacy_oura_json(self):
+        json_content = json.dumps([{"day": "2026-09-05", "score": 82}])
+        self.mock_s3.get_object.return_value = {
+            "Body": MagicMock(read=MagicMock(return_value=json_content.encode("utf-8")))
+        }
+        result = self.handler.validate_json_payload(
+            "bucket", "oura/readiness/readiness.json", "oura/readiness"
+        )
+        assert result["valid"] is True
+        assert result["record_count"] == 1
+
 
 class TestLambdaHandler(unittest.TestCase):
     def setUp(self):
@@ -97,7 +126,7 @@ class TestLambdaHandler(unittest.TestCase):
         self.handler.glue = self.mock_glue
 
         # Mock S3 get_object for header validation
-        csv_content = "id,day,score,timestamp\ndata..."
+        csv_content = ",".join(OURA_READINESS_HEADERS) + "\ndata..."
         self.mock_s3.get_object.return_value = {
             "Body": MagicMock(read=MagicMock(return_value=csv_content.encode("utf-8")))
         }
@@ -146,6 +175,34 @@ class TestLambdaHandler(unittest.TestCase):
         self.handler.lambda_handler(event, None)
         self.mock_glue.start_job_run.assert_called_once()
 
+    def test_manual_pipeline_lock_suppresses_event_driven_glue(self):
+        csv_content = ",".join(OURA_READINESS_HEADERS) + "\ndata..."
+
+        def get_object(**kwargs):
+            if kwargs["Key"] == self.handler.MANUAL_PIPELINE_LOCK_KEY:
+                body = b'{"expires_at_epoch":4102444800}'
+            else:
+                body = csv_content.encode("utf-8")
+            return {"Body": MagicMock(read=MagicMock(return_value=body))}
+
+        self.mock_s3.get_object.side_effect = get_object
+        event = {
+            "Records": [{
+                "s3": {
+                    "bucket": {"name": "test-bucket"},
+                    "object": {
+                        "key": "oura/readiness/year=2026/month=09/day=05/data.csv",
+                        "size": 500,
+                    },
+                }
+            }]
+        }
+
+        result = self.handler.lambda_handler(event, None)
+        body = json.loads(result["body"])
+        assert body["results"][0]["manual_pipeline_locked"] is True
+        self.mock_glue.start_job_run.assert_not_called()
+
 
 class TestHeaderNormalizationConsistency(unittest.TestCase):
     """Ensure Lambda and Glue use identical header normalization."""
@@ -165,7 +222,7 @@ class TestHeaderNormalizationConsistency(unittest.TestCase):
         mock_s3 = MagicMock()
         handler.s3 = mock_s3
 
-        csv_content = "id;day;score;timestamp\ndata..."
+        csv_content = ";".join(OURA_READINESS_HEADERS) + "\ndata..."
         mock_s3.get_object.return_value = {
             "Body": MagicMock(read=MagicMock(return_value=csv_content.encode("utf-8")))
         }

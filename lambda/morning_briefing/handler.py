@@ -13,6 +13,7 @@ No charts — just the actionable takeaway for the morning.
 
 import json
 import os
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 
@@ -35,6 +36,15 @@ OURA_INGEST_FUNCTION = os.environ.get("OURA_INGEST_FUNCTION", "")
 s3 = boto3.client("s3")
 
 _anthropic_client = None
+
+
+def _gold_table(table_name):
+    """Return a safe, instance-aware fully qualified Gold table name."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", ATHENA_DATABASE):
+        raise ValueError(f"Invalid ATHENA_DATABASE: {ATHENA_DATABASE!r}")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table_name):
+        raise ValueError(f"Invalid table name: {table_name!r}")
+    return f"{ATHENA_DATABASE}.{table_name}"
 
 
 def _get_anthropic_client():
@@ -166,7 +176,7 @@ def build_briefing():
     bullets = []
 
     # Query 1: Latest day's core metrics
-    latest_sql = """
+    latest_sql = f"""
     SELECT
         date,
         readiness_score,
@@ -175,34 +185,34 @@ def build_briefing():
         hrv_ms,
         had_workout,
         combined_wellness_score
-    FROM bio_gold.daily_readiness_performance
+    FROM {_gold_table('daily_readiness_performance')}
     WHERE readiness_score IS NOT NULL
     ORDER BY date DESC
     LIMIT 1
     """
 
     # Query 2: Energy state with context for dynamic guidance
-    energy_sql = """
+    energy_sql = f"""
     SELECT date, energy_state, readiness_score, sleep_score, hrv_balance,
            readiness_delta, sleep_delta, readiness_3day_avg, sleep_3day_avg,
            had_workout, output_zone
-    FROM bio_gold.energy_state
+    FROM {_gold_table('energy_state')}
     ORDER BY date DESC
     LIMIT 1
     """
 
     # Query 3: Workout recommendation
-    workout_sql = """
+    workout_sql = f"""
     SELECT date, recommended_intensity, recommendation_text
-    FROM bio_gold.workout_recommendations
+    FROM {_gold_table('workout_recommendations')}
     ORDER BY date DESC
     LIMIT 1
     """
 
     # Query 4: Training load (TSB / form)
-    training_sql = """
+    training_sql = f"""
     SELECT date, tss
-    FROM bio_gold.training_load_daily
+    FROM {_gold_table('training_load_daily')}
     ORDER BY date DESC
     LIMIT 7
     """
