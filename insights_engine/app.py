@@ -16,7 +16,7 @@ from datetime import date, timedelta
 import streamlit as st
 import pandas as pd
 
-from insights_engine.config import CHART_CONFIG, GOLD_DB
+from insights_engine.config import CHART_CONFIG, GOLD_DB, MFP_ENABLED
 from insights_engine.core.athena_client import AthenaClient
 from insights_engine.core.nl_to_sql import NLToSQLEngine
 
@@ -429,6 +429,11 @@ if page == "💬 Ask":
 elif page == "📊 Insights":
     st.header("Signature Insights")
     st.caption("Automated analysis of your biometric data.")
+    if not MFP_ENABLED:
+        st.info(
+            "MyFitnessPal ingestion is disabled. Nutrition charts use preserved "
+            "historical data and will not receive new daily records."
+        )
 
     athena = get_athena()
 

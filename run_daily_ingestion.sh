@@ -24,6 +24,16 @@ BIO_PREFIX="${BIO_PREFIX:-bio-lakehouse}"
 GOLD_DB="${BIO_ATHENA_DATABASE:-bio_gold}"
 STREAMLIT_PORT="${STREAMLIT_PORT:-8501}"
 PELOTON_EXPORT_PREFIX="${PELOTON_EXPORT_PREFIX:-KnownasNoma_}"
+BIO_MFP_ENABLED="${BIO_MFP_ENABLED:-true}"
+
+case "$BIO_MFP_ENABLED" in
+    1|true|TRUE|yes|YES) MFP_ENABLED=true ;;
+    0|false|FALSE|no|NO) MFP_ENABLED=false ;;
+    *)
+        echo "ERROR: BIO_MFP_ENABLED must be true or false (got: $BIO_MFP_ENABLED)" >&2
+        exit 2
+        ;;
+esac
 
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}"
 BUCKET="${BIO_PREFIX}-bronze-${AWS_ACCOUNT_ID}"
@@ -55,7 +65,10 @@ pick_newest() {
 
 HK_ZIP=$(pick_newest "export*.zip")
 PELO_CSV=$(pick_newest "${PELOTON_EXPORT_PREFIX}workouts*.csv")
-MFP_CSV=$(pick_newest "Nutrition-Summary*.csv" || true)
+MFP_CSV=""
+if [ "$MFP_ENABLED" = true ]; then
+    MFP_CSV=$(pick_newest "Nutrition-Summary*.csv" || true)
+fi
 
 if [ -z "$HK_ZIP" ]; then
     echo "  ERROR: No HealthKit export found in ~/Downloads/. Please export from your phone first."
@@ -83,7 +96,9 @@ fi
 
 echo "  HealthKit: $HK_ZIP"
 echo "  Peloton:   $PELO_CSV"
-if [ -n "$MFP_CSV" ]; then
+if [ "$MFP_ENABLED" = false ]; then
+    echo "  MFP:       disabled (historical Gold data preserved)"
+elif [ -n "$MFP_CSV" ]; then
     echo "  MFP:       $MFP_CSV"
 else
     echo "  MFP:       (none found — skipping)"
@@ -278,10 +293,18 @@ HK_RUN=$(start_or_attach "${BIO_PREFIX}-healthkit-normalizer" \
 PELO_RUN=$(start_or_attach "${BIO_PREFIX}-peloton-normalizer" \
     --arguments '{"--source_bucket":"'"${BUCKET}"'","--source_type":"peloton"}')
 
-MFP_RUN=$(start_or_attach "${BIO_PREFIX}-mfp-normalizer" \
-    --arguments '{"--bronze_bucket":"'"${BUCKET}"'","--silver_bucket":"'"${BIO_PREFIX}"'-silver-'"${AWS_ACCOUNT_ID}"'"}')
+MFP_RUN=""
+if [ "$MFP_ENABLED" = true ]; then
+    MFP_RUN=$(start_or_attach "${BIO_PREFIX}-mfp-normalizer" \
+        --arguments '{"--bronze_bucket":"'"${BUCKET}"'","--silver_bucket":"'"${BIO_PREFIX}"'-silver-'"${AWS_ACCOUNT_ID}"'"}')
+fi
 
-echo "  Started/attached: Oura=$OURA_RUN  HK=$HK_RUN  Peloton=$PELO_RUN  MFP=$MFP_RUN"
+if [ "$MFP_ENABLED" = true ]; then
+    MFP_STATUS="$MFP_RUN"
+else
+    MFP_STATUS="SKIPPED"
+fi
+echo "  Started/attached: Oura=$OURA_RUN  HK=$HK_RUN  Peloton=$PELO_RUN  MFP=$MFP_STATUS"
 echo "  Polling (expect ~13 min for HealthKit)..."
 
 while true; do
@@ -291,23 +314,32 @@ while true; do
         --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
     PELO=$(aws glue get-job-run --job-name "${BIO_PREFIX}-peloton-normalizer" --run-id "$PELO_RUN" \
         --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
-    MFP=$(aws glue get-job-run --job-name "${BIO_PREFIX}-mfp-normalizer" --run-id "$MFP_RUN" \
-        --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
+    MFP="SKIPPED"
+    if [ "$MFP_ENABLED" = true ]; then
+        MFP=$(aws glue get-job-run --job-name "${BIO_PREFIX}-mfp-normalizer" --run-id "$MFP_RUN" \
+            --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
+    fi
     echo "  $(date +%H:%M:%S) Oura=$OURA  HK=$HK  Peloton=$PELO  MFP=$MFP"
 
     FAILED=0
-    for state in "$OURA" "$HK" "$PELO" "$MFP"; do
+    for state in "$OURA" "$HK" "$PELO"; do
         case "$state" in
             FAILED|STOPPED|TIMEOUT|ERROR) FAILED=1 ;;
         esac
     done
+    if [ "$MFP_ENABLED" = true ]; then
+        case "$MFP" in
+            FAILED|STOPPED|TIMEOUT|ERROR) FAILED=1 ;;
+        esac
+    fi
     if [ "$FAILED" -eq 1 ]; then
         echo "  ERROR: A normalizer ended in a failed state (FAILED/STOPPED/TIMEOUT/ERROR). Check AWS Glue console."
         exit 1
     fi
 
     if [ "$OURA" = "SUCCEEDED" ] && [ "$HK" = "SUCCEEDED" ] && \
-       [ "$PELO" = "SUCCEEDED" ] && [ "$MFP" = "SUCCEEDED" ]; then
+       [ "$PELO" = "SUCCEEDED" ] && \
+       { [ "$MFP_ENABLED" = false ] || [ "$MFP" = "SUCCEEDED" ]; }; then
         break
     fi
     sleep 20
@@ -468,8 +500,13 @@ fi
 echo ""
 echo "--- Step 13: Cleanup Old Files ---"
 
-# Keep only the 2 newest exports in inbox, delete the rest
-for pattern in "export*.zip" "${PELOTON_EXPORT_PREFIX}workouts*.csv" "Nutrition-Summary*.csv"; do
+# Keep only the 2 newest active-source exports in inbox. When MFP is disabled,
+# leave its local exports untouched as an additional historical backup.
+CLEANUP_PATTERNS=("export*.zip" "${PELOTON_EXPORT_PREFIX}workouts*.csv")
+if [ "$MFP_ENABLED" = true ]; then
+    CLEANUP_PATTERNS+=("Nutrition-Summary*.csv")
+fi
+for pattern in "${CLEANUP_PATTERNS[@]}"; do
     { ls -t "$INBOX"/$pattern 2>/dev/null || true; } | tail -n +3 | while read f; do
         rm "$f" && echo "  Deleted old: $(basename "$f")"
     done

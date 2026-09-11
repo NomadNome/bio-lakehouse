@@ -15,7 +15,7 @@ from plotly.subplots import make_subplots
 from insights_engine.core.athena_client import AthenaClient
 from insights_engine.insights.base import DateRange, InsightAnalyzer, InsightResult
 from insights_engine.viz import theme
-from insights_engine.config import GOLD_DB
+from insights_engine.config import GOLD_DB, MFP_ENABLED
 
 
 class NutritionAnalyzer(InsightAnalyzer):
@@ -147,6 +147,11 @@ class NutritionAnalyzer(InsightAnalyzer):
                 "will undercount actual intake."
             )
         result.caveats = caveats
+        if not MFP_ENABLED:
+            result.caveats.insert(
+                0,
+                "MyFitnessPal ingestion is disabled; these results use preserved historical data.",
+            )
 
         return result
 

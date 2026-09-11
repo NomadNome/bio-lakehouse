@@ -123,6 +123,12 @@ WORKOUT_TSS_ESTIMATES = {
 # Body composition goal (set via env to keep personal targets out of code)
 BODY_FAT_GOAL_PCT = float(os.environ.get("BIO_BF_GOAL_PCT", "0"))
 
+# MyFitnessPal is an optional historical source. Disabling ingestion preserves
+# existing Bronze/Silver/Gold data while removing it from the daily critical path.
+MFP_ENABLED = os.environ.get("BIO_MFP_ENABLED", "true").strip().lower() in {
+    "1", "true", "yes"
+}
+
 OVERLOAD_THRESHOLDS = {
     "min_weeks": 4,
     "progression_pct": 0.02,           # >2% weekly output growth = Progressing

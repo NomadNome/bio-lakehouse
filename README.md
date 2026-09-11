@@ -380,8 +380,8 @@ The system runs a fully automated daily pipeline, triggered by EventBridge or th
 Step 1:  Find latest files (inbox or ~/Downloads)
 Step 2:  Parse HealthKit XML → partitioned CSVs
 Step 3:  Split Peloton CSV by date
-Step 4:  Upload to Bronze S3 (HealthKit, Peloton, MFP)
-Step 5:  Run 4 Glue normalizers in parallel (Oura, HK, Peloton, MFP)
+Step 4:  Upload to Bronze S3 (HealthKit, Peloton, optional MFP)
+Step 5:  Run source normalizers in parallel (MFP is skipped when disabled)
 Step 6:  Silver crawler (update Athena catalog)
 Step 7:  Gold refresh (dbt run via Glue Python shell)
 Step 8:  Gold crawler (update Athena catalog)
@@ -437,7 +437,7 @@ EventBridge (daily 9am) → Lambda → Oura API v2 (7-day lookback)
 - All S3 uploads use `SSE-AES256` encryption (bucket policy enforced)
 - OAuth tokens rotated via refresh flow (stored in `.oura-tokens.json` locally, never committed)
 
-### 2. Local Automation (Peloton, HealthKit, MFP)
+### 2. Local Automation (Peloton, HealthKit, optional MFP)
 
 **Architecture:** LaunchD scheduled jobs &rarr; inbox &rarr; `run_daily_ingestion.sh` &rarr; S3 Bronze
 
@@ -445,6 +445,12 @@ EventBridge (daily 9am) → Lambda → Oura API v2 (7-day lookback)
 - **Daily Ingestion** (`run_daily_ingestion.sh`): 12-step pipeline from parse to morning briefing
 - **Health Check** (`scripts/check_pipeline_health.sh`): Monitors data freshness, alerts on stale data
 - **LaunchD Plists**: `com.bio-lakehouse.daily-ingestion.plist`, `com.bio-lakehouse.inbox-mover.plist`, `com.bio-lakehouse.health-check.plist`
+
+Set `BIO_MFP_ENABLED=false` in an instance's `.env` file to retire new
+MyFitnessPal ingestion. The runner will not select or upload an MFP export,
+start its Glue normalizer, wait for that job, or clean up historical local MFP
+exports. Existing Bronze, Silver, and Gold nutrition history remains available
+to the dashboard and is labeled as historical.
 
 ### 3. OpenClaw Agent Automation (Peloton Backup)
 
@@ -563,7 +569,7 @@ The patterns here -- event-driven ingestion, metadata-driven governance, AI-powe
 
 **Current State**: Primary instance operational; second-instance hardening and remaining stack parity are staged for reviewed deployment
 **Infrastructure**: 7 CloudFormation stacks deployed in AWS us-east-1
-**Data Freshness**: Daily automated pipeline (HealthKit, Peloton, MFP local + Oura Lambda)
+**Data Freshness**: Daily automated pipeline (HealthKit and Peloton local + Oura Lambda; MFP optional)
 **Monitoring**: CloudWatch Logs for Lambda/Glue, DynamoDB ingestion log, Streamlit query log, health check script
 **Testing**: 250+ unit tests with automated Python 3.12 CI
 

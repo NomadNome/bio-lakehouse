@@ -21,6 +21,7 @@ os.environ["OURA_GLUE_JOB"] = "bio-lakehouse-oura-normalizer"
 os.environ["PELOTON_GLUE_JOB"] = "bio-lakehouse-peloton-normalizer"
 
 HANDLER_PATH = Path(__file__).parent.parent / "lambda" / "ingestion_trigger" / "handler.py"
+DAILY_RUNNER_PATH = Path(__file__).parent.parent / "run_daily_ingestion.sh"
 
 OURA_READINESS_HEADERS = [
     "id",
@@ -50,6 +51,17 @@ def load_handler():
         handler = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(handler)
     return handler, mock_boto3
+
+
+class TestOptionalMFPInDailyRunner(unittest.TestCase):
+    def test_mfp_feature_flag_guards_daily_critical_path(self):
+        script = DAILY_RUNNER_PATH.read_text()
+
+        assert 'BIO_MFP_ENABLED="${BIO_MFP_ENABLED:-true}"' in script
+        assert 'if [ "$MFP_ENABLED" = true ]; then\n    MFP_CSV=' in script
+        assert 'if [ "$MFP_ENABLED" = true ]; then\n    MFP_RUN=' in script
+        assert 'MFP_STATUS="SKIPPED"' in script
+        assert '{ [ "$MFP_ENABLED" = false ] || [ "$MFP" = "SUCCEEDED" ]; }' in script
 
 
 class TestDetectSource(unittest.TestCase):
