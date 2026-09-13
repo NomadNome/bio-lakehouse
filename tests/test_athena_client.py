@@ -53,7 +53,11 @@ class TestCoerceTypes:
             "disciplines": ["Cycling", "Strength,Yoga", "Yoga"],
         })
         result = AthenaClient._coerce_types(df)
-        assert result["name"].dtype == object
+        # pandas 2.x commonly represents text as object; pandas 3.x defaults
+        # to StringDtype. The contract is that text stays textual and values
+        # are not coerced, not a particular pandas storage implementation.
+        assert pd.api.types.is_string_dtype(result["name"].dtype)
+        assert result["name"].tolist() == ["cycling", "strength", "yoga"]
         assert result["disciplines"].iloc[0] == "Cycling"
 
     def test_mixed_numeric_with_nulls(self):
@@ -70,7 +74,8 @@ class TestCoerceTypes:
         })
         result = AthenaClient._coerce_types(df)
         # Only 1 out of 4 is numeric (25%), below 50% threshold
-        assert result["notes"].dtype == object
+        assert pd.api.types.is_string_dtype(result["notes"].dtype)
+        assert result["notes"].tolist() == ["good day", "bad day", "123", "ok"]
 
     def test_empty_dataframe(self):
         df = pd.DataFrame()
