@@ -33,10 +33,8 @@ def _mock_athena():
     })
 
     workout_df = pd.DataFrame({
-        "workout_type": ["Cycling Only", "Cycling Only", "Strength Only", "Strength Only", "Rest Day", "Rest Day"],
-        "readiness_bucket": ["High (85+)", "Moderate (70-84)", "High (85+)", "Moderate (70-84)", "High (85+)", "Moderate (70-84)"],
-        "avg_readiness_in_bucket": [87.0, 76.0, 88.0, 77.0, 89.0, 78.0],
-        "sample_days": [20, 15, 10, 8, 12, 10],
+        "intensity": ["light"] * 6 + ["moderate"] * 6 + ["high"] * 6,
+        "readiness_delta_d1": [1, 0, -1, 1, 0, 1, -1, -2, 0, -1, -3, -2, -4, -5, -2, -6, -3, -4],
     })
 
     baseline_df = pd.DataFrame({
@@ -56,7 +54,7 @@ def _mock_athena():
         sql_lower = sql.lower()
         if "sleep_performance_prediction" in sql_lower:
             return sleep_df
-        elif "workout_type_optimization" in sql_lower:
+        elif "workout_recovery_windows" in sql_lower:
             return workout_df
         elif "dashboard_30day" in sql_lower:
             return baseline_df
@@ -108,7 +106,7 @@ class TestLoadHistoricalModels:
         models = simulator.load_historical_models()
         assert "sleep_regression" in models
         assert "sleep_buckets" in models
-        assert "workout_type_effects" in models
+        assert "workout_intensity_effects" in models
         assert "baseline" in models
         assert "current_streak" in models
 
@@ -169,6 +167,22 @@ class TestSimulate:
             sleep_score=80, workout_type="cycling", workout_intensity="high", consecutive_workout_days=5,
         ))
         assert rest.predicted_readiness > intense.predicted_readiness
+
+    def test_negative_training_balance_lowers_readiness(self, simulator):
+        recovered = simulator.simulate(Scenario(
+            sleep_score=80,
+            workout_type="rest",
+            workout_intensity="none",
+            training_stress_balance=10,
+        ))
+        fatigued = simulator.simulate(Scenario(
+            sleep_score=80,
+            workout_type="rest",
+            workout_intensity="none",
+            training_stress_balance=-25,
+        ))
+        assert recovered.predicted_readiness > fatigued.predicted_readiness
+        assert fatigued.supporting_data["training_load_adjustment"] < 0
 
     def test_high_sleep_beats_low_sleep(self, simulator):
         high = simulator.simulate(Scenario(sleep_score=95))

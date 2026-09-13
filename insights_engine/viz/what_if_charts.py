@@ -77,7 +77,7 @@ def readiness_gauge(
     """Bullet-style gauge showing predicted readiness vs personal baseline."""
     fig = go.Figure()
 
-    # Confidence band (background bar)
+    # Historical variability band (background bar)
     fig.add_trace(
         go.Bar(
             x=[confidence_range[1] - confidence_range[0]],
@@ -85,7 +85,7 @@ def readiness_gauge(
             orientation="h",
             base=confidence_range[0],
             marker_color=theme.SURFACE,
-            name="Confidence Range",
+            name="Historical Range",
             hovertemplate=f"Range: {confidence_range[0]:.0f}–{confidence_range[1]:.0f}<extra></extra>",
             width=0.5,
         )
@@ -186,7 +186,7 @@ def multi_day_projection_chart(projections: list, baseline_readiness: float) -> 
             col=1,
         )
 
-    # Confidence band
+    # Scenario range (not a calibrated confidence interval)
     fig.add_trace(
         go.Scatter(
             x=dates + dates[::-1],
@@ -194,7 +194,7 @@ def multi_day_projection_chart(projections: list, baseline_readiness: float) -> 
             fill="toself",
             fillcolor=f"rgba(99,102,241,0.15)",
             line=dict(width=0),
-            name="Confidence",
+            name="Scenario range",
             hoverinfo="skip",
             showlegend=True,
         ),

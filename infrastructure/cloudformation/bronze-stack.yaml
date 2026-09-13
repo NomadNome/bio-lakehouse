@@ -15,6 +15,19 @@ Parameters:
     Type: String
     Default: bio_ingestion_log
     Description: DynamoDB ingestion-log table name (per-instance)
+  IngestionLambdaCodeS3Bucket:
+    Type: String
+    Default: ''
+    Description: Optional bucket containing a versioned ingestion Lambda package
+  IngestionLambdaCodeS3Key:
+    Type: String
+    Default: ''
+    Description: Optional key for a versioned ingestion Lambda package
+
+Conditions:
+  HasIngestionLambdaPackage: !And
+    - !Not [!Equals [!Ref IngestionLambdaCodeS3Bucket, '']]
+    - !Not [!Equals [!Ref IngestionLambdaCodeS3Key, '']]
 
 Resources:
   # -------------------------------------------------------
@@ -23,6 +36,7 @@ Resources:
   BronzeBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
+    DependsOn: LambdaInvokePermission
     Properties:
       BucketName: !Sub '${ProjectPrefix}-bronze-${AWS::AccountId}'
       VersioningConfiguration:
@@ -36,6 +50,22 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            Function: !GetAtt IngestionTriggerFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .csv
+          - Event: 's3:ObjectCreated:*'
+            Function: !GetAtt IngestionTriggerFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .json
       Tags:
         - Key: Project
           Value: !Ref ProjectPrefix
@@ -82,6 +112,7 @@ Resources:
   IngestionLogTable:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Ref IngestionLogTableName
       BillingMode: PAY_PER_REQUEST
@@ -89,7 +120,7 @@ Resources:
         - AttributeName: file_path
           AttributeType: S
         - AttributeName: upload_timestamp
-          AttributeType: S
+          AttributeType: N
       KeySchema:
         - AttributeName: file_path
           KeyType: HASH
@@ -144,7 +175,7 @@ Resources:
                   - 'glue:StartJobRun'
                   - 'glue:GetJobRun'
                   - 'glue:GetJobRuns'
-                Resource: '*'
+                Resource: !Sub 'arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/${ProjectPrefix}-*'
 
   # -------------------------------------------------------
   # Lambda Function - Ingestion Trigger
@@ -167,14 +198,18 @@ Resources:
           OURA_GLUE_JOB: !Sub '${ProjectPrefix}-oura-normalizer'
           PELOTON_GLUE_JOB: !Sub '${ProjectPrefix}-peloton-normalizer'
           HEALTHKIT_GLUE_JOB: !Sub '${ProjectPrefix}-healthkit-normalizer'
+          MFP_GLUE_JOB: !Sub '${ProjectPrefix}-mfp-normalizer'
           ALERT_SNS_TOPIC_ARN: !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${ProjectPrefix}-health-alerts'
-      Code:
-        ZipFile: |
-          # Inline stub - deploy full handler via aws lambda update-function-code
-          # See lambda/ingestion_trigger/handler.py for the real implementation
-          def lambda_handler(event, context):
-              print("Stub handler - deploy real code")
-              return {"statusCode": 200}
+      Code: !If
+        - HasIngestionLambdaPackage
+        - S3Bucket: !Ref IngestionLambdaCodeS3Bucket
+          S3Key: !Ref IngestionLambdaCodeS3Key
+        - ZipFile: |
+            # Inline stub for first-time deployments without a packaged handler.
+            # Production updates should pass the versioned S3 package parameters.
+            def lambda_handler(event, context):
+                print("Stub handler - deploy real code")
+                return {"statusCode": 200}
       Tags:
         - Key: Project
           Value: !Ref ProjectPrefix

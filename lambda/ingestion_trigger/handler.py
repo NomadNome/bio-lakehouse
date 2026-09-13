@@ -1,7 +1,7 @@
 """
 Bio Lakehouse - Ingestion Trigger Lambda Handler
 
-Triggered by S3 PUT events on the Bronze bucket. Validates uploaded CSV files,
+Triggered by S3 PUT events on the Bronze bucket. Validates uploaded data files,
 logs ingestion metadata to DynamoDB, and triggers downstream Glue ETL jobs.
 """
 
@@ -74,6 +74,22 @@ EXPECTED_HEADERS = {
 
 
 DRIFT_COOLDOWN_SECONDS = 3600  # 1 hour between duplicate drift alerts per source
+MANUAL_PIPELINE_LOCK_KEY = "control/manual-pipeline.lock"
+
+
+def is_manual_pipeline_locked(bucket: str) -> bool:
+    """Return True while the local full-pipeline orchestration lock is active."""
+    try:
+        response = s3.get_object(Bucket=bucket, Key=MANUAL_PIPELINE_LOCK_KEY)
+        payload = json.loads(response["Body"].read().decode("utf-8"))
+        expires_at = int(payload.get("expires_at_epoch", 0))
+        return expires_at > int(datetime.now(timezone.utc).timestamp())
+    except Exception as exc:
+        # Missing, malformed, and temporarily unreadable locks all leave the
+        # event-driven path enabled. Glue's concurrent-run guard is the final
+        # protection against duplicate starts.
+        print(f"Manual-pipeline lock not active: {exc}")
+        return False
 
 
 def _is_drift_recently_alerted(source: str) -> bool:
@@ -176,6 +192,33 @@ def validate_csv_headers(bucket: str, key: str, source: str) -> dict:
         }
 
 
+def validate_json_payload(bucket: str, key: str, source: str) -> dict:
+    """Validate the legacy raw-Oura JSON shape before starting normalization."""
+    try:
+        response = s3.get_object(Bucket=bucket, Key=key)
+        payload = json.loads(response["Body"].read().decode("utf-8"))
+        records = payload.get("data") if isinstance(payload, dict) else payload
+        valid_records = (
+            source.startswith("oura/")
+            and isinstance(records, list)
+            and bool(records)
+            and all(isinstance(record, dict) for record in records)
+        )
+        return {
+            "valid": valid_records,
+            "record_count": len(records) if isinstance(records, list) else 0,
+            "format": "json",
+            "error": None if valid_records else "Expected a non-empty list of Oura records",
+        }
+    except Exception as exc:
+        return {
+            "valid": False,
+            "record_count": 0,
+            "format": "json",
+            "error": str(exc),
+        }
+
+
 def log_ingestion(file_path: str, metadata: dict) -> None:
     """Write ingestion record to DynamoDB."""
     table = dynamodb.Table(INGESTION_LOG_TABLE)
@@ -257,7 +300,7 @@ def trigger_glue_job(source, bucket, key):
         return None
 
 
-def handle_batch_manifest(bucket, key):
+def handle_batch_manifest(bucket, key, trigger_jobs=True):
     """Process a batch manifest file and trigger Glue jobs for each source type."""
     print(f"Batch manifest detected: s3://{bucket}/{key}")
 
@@ -281,6 +324,11 @@ def handle_batch_manifest(bucket, key):
         job_name = get_job_name(source)
         if not job_name:
             print(f"No Glue job mapped for source: {source}")
+            skipped.append(source)
+            continue
+
+        if not trigger_jobs:
+            print(f"Manual pipeline owns {job_name}; skipping event-driven start")
             skipped.append(source)
             continue
 
@@ -348,9 +396,13 @@ def lambda_handler(event, context):
             results.append({"key": key, "skipped": True, "reason": "non_data_file"})
             continue
 
+        manual_pipeline_locked = is_manual_pipeline_locked(bucket)
+
         # Batch manifest handling — trigger normalizers once for bulk uploads
         if key.endswith("_manifest.json"):
-            batch_result = handle_batch_manifest(bucket, key)
+            batch_result = handle_batch_manifest(
+                bucket, key, trigger_jobs=not manual_pipeline_locked
+            )
             results.append({"key": key, "source": "batch", "batch": batch_result})
             continue
 
@@ -379,8 +431,12 @@ def lambda_handler(event, context):
             results.append({"key": key, "skipped": True, "reason": "duplicate"})
             continue
 
-        # Validate CSV headers
-        validation = validate_csv_headers(bucket, key, source)
+        # Validate the source format before triggering compute. JSON support is
+        # retained for the legacy raw-Oura sync; current Lambdas upload CSV.
+        if key.endswith(".json"):
+            validation = validate_json_payload(bucket, key, source)
+        else:
+            validation = validate_csv_headers(bucket, key, source)
         print(f"Validation result: valid={validation['valid']}")
 
         if validation.get("missing_headers"):
@@ -415,10 +471,12 @@ def lambda_handler(event, context):
 
         # Trigger Glue job if validation passed
         glue_run_id = None
-        if validation["valid"]:
+        if validation["valid"] and not manual_pipeline_locked:
             glue_run_id = trigger_glue_job(source, bucket, key)
             if glue_run_id:
                 print(f"Triggered Glue job, run ID: {glue_run_id}")
+        elif validation["valid"] and manual_pipeline_locked:
+            print("Manual pipeline owns normalizer execution; event trigger skipped")
 
         results.append(
             {
@@ -426,6 +484,7 @@ def lambda_handler(event, context):
                 "source": source,
                 "valid": validation["valid"],
                 "glue_run_id": glue_run_id,
+                "manual_pipeline_locked": manual_pipeline_locked,
             }
         )
 

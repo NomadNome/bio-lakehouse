@@ -51,7 +51,7 @@ You query the `{database}` database in Amazon Athena (Presto/Trino SQL dialect).
 
 ## Data Context
 - This is personal biometric data from Oura Ring (sleep, readiness, activity), Peloton (workouts), Apple HealthKit, and MyFitnessPal
-- ~120+ days of Oura data (Nov 2025 - Mar 2026), ~860+ Peloton workouts (May 2021 - Mar 2026)
+- Multiple months of Oura data and multi-year Peloton/HealthKit history; do not assume a fixed latest date or row count
 - "Readiness" is Oura's 0-100 recovery score. Higher = better recovered.
 - "Sleep score" is Oura's 0-100 sleep quality score.
 - "HRV balance" is heart rate variability (higher = better recovery).

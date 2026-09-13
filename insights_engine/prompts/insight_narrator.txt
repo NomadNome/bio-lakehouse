@@ -18,7 +18,7 @@ Use only the sections that are relevant. Skip any section where the data is unre
 
 2. **Week-Over-Week** — Compare this week vs last week on the key metrics. Call out the biggest movers (positive or negative). Use actual deltas (e.g., "+6 points", "-12ms").
 
-3. **Day-by-Day Story** — Walk through the week chronologically. Identify the best day, worst day, and any clear cause-effect patterns (workout → next-day readiness, poor sleep → low HRV, rest day → recovery bounce).
+3. **Day-by-Day Story** — Walk through the week chronologically. Identify the best day, worst day, and notable temporal associations (workout followed by next-day readiness change, poor sleep alongside low HRV, rest day followed by a recovery bounce). Do not describe observational patterns as cause and effect.
 
 4. **What's Working** — Based on the data, what behaviors correlated with good outcomes this week? Be specific.
 

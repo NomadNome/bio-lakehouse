@@ -8,11 +8,12 @@ Each training run logs parameters, metrics, and model artifacts.
 from __future__ import annotations
 
 import os
-from pathlib import Path
+from models.readiness_predictor.paths import default_mlflow_db_path
 
-MLFLOW_DIR = Path(__file__).resolve().parents[2]
-TRACKING_URI = f"sqlite:///{MLFLOW_DIR / 'mlflow.db'}"
-EXPERIMENT_NAME = "readiness-predictor"
+TRACKING_URI = os.environ.get(
+    "MLFLOW_TRACKING_URI", f"sqlite:///{default_mlflow_db_path()}"
+)
+EXPERIMENT_NAME = os.environ.get("BIO_MLFLOW_EXPERIMENT", "readiness-predictor")
 
 
 def setup_mlflow():

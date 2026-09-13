@@ -29,6 +29,7 @@ class Scenario:
     workout_type: str = "rest"
     workout_intensity: str = "none"
     consecutive_workout_days: int = 0
+    training_stress_balance: float | None = None
 
 
 @dataclass
@@ -102,17 +103,18 @@ class WhatIfSimulator:
         models["sleep_regression"] = self._fit_sleep_regression(sleep_df)
         models["sleep_buckets"] = self._build_sleep_buckets(sleep_df)
 
-        # 2. Workout type → readiness from workout_type_optimization
+        # 2. Workout intensity → next-day readiness change. This is still
+        # observational, but its temporal direction is valid: workout first,
+        # following-day readiness second. The old same-day readiness buckets
+        # suffered from selection bias (high-readiness days invite workouts).
         workout_df = self.athena.execute_query(f"""
             SELECT
-                workout_type,
-                readiness_bucket,
-                avg_readiness_in_bucket,
-                sample_days
-            FROM {GOLD_DB}.workout_type_optimization
-            WHERE avg_readiness_in_bucket IS NOT NULL
+                intensity,
+                readiness_delta_d1
+            FROM {GOLD_DB}.workout_recovery_windows
+            WHERE readiness_delta_d1 IS NOT NULL
         """)
-        models["workout_type_effects"] = self._build_workout_effects(workout_df)
+        models["workout_intensity_effects"] = self._build_workout_effects(workout_df)
 
         # 3. Baseline stats from dashboard_30day
         baseline_df = self.athena.execute_query(f"""
@@ -163,37 +165,46 @@ class WhatIfSimulator:
         else:
             base_readiness = baseline["mean_readiness"]
 
-        # Step 2: adjust for workout type
+        # Step 2: apply a shrunk, observational next-day workout association.
         workout_delta = self._get_workout_delta(
-            scenario.workout_type, models["workout_type_effects"], baseline
+            scenario.workout_intensity, models["workout_intensity_effects"]
         )
-        adjusted_readiness = base_readiness + workout_delta
 
-        # Step 3: adjust for consecutive workouts (overtraining penalty)
+        # Step 3: feed current/projected CTL-ATL form into readiness. This was
+        # previously displayed after the fact but did not influence the plan.
+        if scenario.training_stress_balance is None:
+            loads = models.get("tss_history", {"ctl": 0.0, "atl": 0.0})
+            tsb = loads["ctl"] - loads["atl"]
+        else:
+            tsb = scenario.training_stress_balance
+        form_adjustment = self._training_load_adjustment(tsb)
+        adjusted_readiness = base_readiness + workout_delta + form_adjustment
+
+        # Step 4: adjust for consecutive workouts (overtraining penalty)
         overtraining_penalty = self._overtraining_penalty(
             scenario.consecutive_workout_days
         )
         predicted_readiness = max(0, min(100, adjusted_readiness + overtraining_penalty))
 
-        # Step 4: confidence range from matching sleep bucket
-        confidence = self._get_confidence_range(
+        # Step 5: outcome range from matching sleep bucket
+        historical_range = self._get_confidence_range(
             scenario.sleep_score, predicted_readiness, models["sleep_buckets"]
         )
 
-        # Step 5: classify energy state
+        # Step 6: classify energy state
         energy_state = self._classify_energy(predicted_readiness, scenario.sleep_score)
 
-        # Step 6: overtraining risk level
+        # Step 7: overtraining risk level
         overtraining_risk = self._classify_overtraining_risk(
             scenario.consecutive_workout_days
         )
 
-        # Step 7: recommendation
+        # Step 8: recommendation
         recommendation = self._make_recommendation(
             energy_state, overtraining_risk, scenario
         )
 
-        # Step 8: comparison to baseline
+        # Step 9: comparison to baseline
         comparison = round(predicted_readiness - baseline["avg_readiness_7d"], 1)
 
         # Supporting data
@@ -202,7 +213,7 @@ class WhatIfSimulator:
 
         return SimulationResult(
             predicted_readiness=round(predicted_readiness, 1),
-            confidence_range=(round(confidence[0], 1), round(confidence[1], 1)),
+            confidence_range=(round(historical_range[0], 1), round(historical_range[1], 1)),
             energy_state=energy_state,
             overtraining_risk=overtraining_risk,
             recommendation=recommendation,
@@ -215,6 +226,9 @@ class WhatIfSimulator:
                 "bucket_mean_readiness": bucket_data.get("mean", None),
                 "baseline_7d_readiness": baseline["avg_readiness_7d"],
                 "workout_delta": round(workout_delta, 1),
+                "workout_delta_method": "observed_next_day_change_shrunk_to_zero",
+                "training_stress_balance": round(float(tsb), 1),
+                "training_load_adjustment": round(form_adjustment, 1),
                 "overtraining_penalty": round(overtraining_penalty, 1),
                 "total_historical_days": baseline["total_days"],
             },
@@ -258,20 +272,22 @@ class WhatIfSimulator:
         effects = {}
         if df.empty:
             return effects
-        for _, row in df.iterrows():
-            wtype = str(row.get("workout_type", "unknown")).lower()
-            readiness = float(row["avg_readiness_in_bucket"])
-            count = int(row.get("sample_days", 1))
-            if wtype not in effects:
-                effects[wtype] = {"weighted_sum": 0.0, "total_count": 0}
-            effects[wtype]["weighted_sum"] += readiness * count
-            effects[wtype]["total_count"] += count
-        # Compute weighted averages
-        for wtype in effects:
-            total = effects[wtype]["total_count"]
-            effects[wtype]["mean_readiness"] = (
-                round(effects[wtype]["weighted_sum"] / total, 1) if total > 0 else 0
-            )
+        numeric = df.copy()
+        numeric["readiness_delta_d1"] = pd.to_numeric(
+            numeric["readiness_delta_d1"], errors="coerce"
+        )
+        numeric = numeric.dropna(subset=["intensity", "readiness_delta_d1"])
+        for intensity, group in numeric.groupby(numeric["intensity"].astype(str).str.lower()):
+            raw_mean = float(group["readiness_delta_d1"].mean())
+            n = len(group)
+            # Small groups are noisy; ten pseudo-observations at zero keep an
+            # apparent effect from dominating the scenario score.
+            shrunk_mean = raw_mean * n / (n + 10)
+            effects[intensity] = {
+                "mean_next_day_delta": round(shrunk_mean, 2),
+                "raw_mean_next_day_delta": round(raw_mean, 2),
+                "n": n,
+            }
         return effects
 
     @staticmethod
@@ -307,20 +323,25 @@ class WhatIfSimulator:
 
     # ── Simulation helpers ──────────────────────────────────────────────
 
-    def _get_workout_delta(self, workout_type: str, effects: dict, baseline: dict) -> float:
-        wtype = workout_type.lower()
-        if wtype == "rest" or wtype == "rest day":
-            rest_data = effects.get("rest day", effects.get("rest", {}))
-            if rest_data.get("mean_readiness"):
-                return rest_data["mean_readiness"] - baseline["mean_readiness"]
-            return 1.5  # rest days typically give a small readiness boost
+    def _get_workout_delta(self, intensity: str, effects: dict) -> float:
+        intensity = intensity.lower()
+        if intensity == "none":
+            return 0.0
+        observed = effects.get(intensity, effects.get("light") if intensity == "low" else None)
+        if observed is not None:
+            return float(observed["mean_next_day_delta"])
 
-        if wtype in effects and effects[wtype].get("mean_readiness"):
-            return effects[wtype]["mean_readiness"] - baseline["mean_readiness"]
+        # Conservative fallback used only when there are no observed recovery
+        # windows for an intensity. These are explicitly assumptions, not
+        # learned causal effects.
+        return {"low": -0.5, "light": -0.5, "moderate": -1.5, "high": -3.0}.get(
+            intensity, -1.0
+        )
 
-        # Fallback: higher intensity → larger negative delta
-        intensity_penalties = {"none": 0, "low": -1.0, "moderate": -2.0, "high": -4.0}
-        return intensity_penalties.get("moderate", -2.0)
+    @staticmethod
+    def _training_load_adjustment(tsb: float) -> float:
+        """Bounded readiness adjustment from CTL-ATL form balance."""
+        return float(np.clip(float(tsb) * 0.2, -6.0, 3.0))
 
     @staticmethod
     def _overtraining_penalty(consecutive_days: int) -> float:
@@ -473,22 +494,24 @@ class WhatIfSimulator:
             else:
                 consecutive = 0
 
-            # Predict readiness via existing single-day simulate()
-            scenario = Scenario(
-                sleep_score=plan.sleep_score,
-                workout_type=plan.workout_type,
-                workout_intensity=plan.workout_intensity,
-                consecutive_workout_days=consecutive,
-            )
-            result = self.simulate(scenario)
-
-            # Estimate TSS and forward-propagate CTL/ATL
+            # Estimate TSS and forward-propagate CTL/ATL before predicting the
+            # following day's readiness, so the projected form is an input.
             tss = self._estimate_tss(plan.workout_type, plan.workout_intensity)
             ctl = ctl + (tss - ctl) * (2.0 / (42 + 1))
             atl = atl + (tss - atl) * (2.0 / (7 + 1))
             tsb = ctl - atl
 
-            # Widen confidence band by 5% per day offset for honest uncertainty
+            scenario = Scenario(
+                sleep_score=plan.sleep_score,
+                workout_type=plan.workout_type,
+                workout_intensity=plan.workout_intensity,
+                consecutive_workout_days=consecutive,
+                training_stress_balance=tsb,
+            )
+            result = self.simulate(scenario)
+
+            # Widen the scenario range by 5% per day offset to reflect that
+            # longer-horizon planning is less constrained by observed data.
             base_lo, base_hi = result.confidence_range
             spread = (base_hi - base_lo) / 2
             widened = spread * (1 + 0.05 * plan.day_offset)

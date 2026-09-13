@@ -18,9 +18,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
-MODEL_DIR = Path(__file__).parent
-MODEL_PATH = MODEL_DIR / "model.joblib"
-METRICS_PATH = MODEL_DIR / "metrics.json"
+from models.readiness_predictor.paths import METRICS_PATH, MODEL_PATH
 
 
 def _load_feature_cols() -> list[str]:
@@ -67,7 +65,7 @@ def load_latest_features() -> pd.DataFrame:
     athena = AthenaClient()
     df = athena.execute_query("""
         SELECT *
-        FROM bio_gold.feature_readiness_daily
+        FROM feature_readiness_daily
         ORDER BY date DESC
         LIMIT 1
     """)
@@ -77,7 +75,6 @@ def load_latest_features() -> pd.DataFrame:
 def predict_next_day() -> dict:
     """Predict tomorrow's readiness score."""
     feature_cols = _load_feature_cols()
-    pipe = _load_model()
     df = load_latest_features()
 
     if df.empty:
@@ -89,33 +86,67 @@ def predict_next_day() -> dict:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
     latest_date = df["date"].iloc[0]
-    X = df[feature_cols].values
 
-    prediction = pipe.predict(X)[0]
-    prediction = float(np.clip(prediction, 0, 100))
-
-    # Load model metrics for confidence context
-    confidence = {}
     metrics = {}
     if METRICS_PATH.exists():
         with open(METRICS_PATH) as f:
             metrics = json.load(f)
-        mae = metrics.get("cv_mae", 0)
+
+    use_baseline = (
+        metrics.get("model_recommended") is False
+        and "readiness_7d_avg" in df.columns
+        and pd.notna(df["readiness_7d_avg"].iloc[0])
+    )
+    if use_baseline:
+        prediction = float(df["readiness_7d_avg"].iloc[0])
+        prediction_source = "rolling_7d_baseline"
+        model_prediction = None
+    else:
+        pipe = _load_model()
+        model_prediction = pipe.predict(df[feature_cols].values)[0]
+        prediction = model_prediction
+        prediction_source = "model"
+    prediction = float(np.clip(prediction, 0, 100))
+
+    # Load held-out evaluation and empirically calibrated error context.
+    # A single MAE is not a confidence interval, so older metrics deliberately
+    # do not produce a range.
+    confidence = {}
+    if metrics:
+        evaluation = metrics.get("evaluation", {})
+        holdout_metrics = evaluation.get("model", {})
+        interval = metrics.get("prediction_interval", {})
+        error_radius = interval.get("absolute_error_p80")
         confidence = {
-            "range_low": round(max(0, prediction - mae), 1),
-            "range_high": round(min(100, prediction + mae), 1),
-            "cv_mae": mae,
+            "cv_mae": metrics.get("cv_mae"),
             "cv_r2": metrics.get("cv_r2", 0),
+            "holdout_mae": holdout_metrics.get("mae"),
+            "holdout_r2": holdout_metrics.get("r2"),
             "n_training_samples": metrics.get("n_samples", 0),
             "best_model": metrics.get("best_model", "unknown"),
             "sample_size_warning": metrics.get("sample_size_warning", False),
+            "model_recommended": metrics.get("model_recommended"),
         }
+        if error_radius is not None:
+            confidence.update({
+                "range_low": round(max(0, prediction - error_radius), 1),
+                "range_high": round(min(100, prediction + error_radius), 1),
+                "interval_level": 0.80,
+                "interval_method": interval.get("method"),
+                "n_calibration": interval.get("n_calibration"),
+            })
 
     importances = metrics.get("feature_importances", {})
 
     result = {
         "prediction_date": latest_date,
         "predicted_readiness": round(prediction, 1),
+        "prediction_source": prediction_source,
+        "model_prediction": (
+            round(float(np.clip(model_prediction, 0, 100)), 1)
+            if model_prediction is not None
+            else None
+        ),
         "confidence": confidence,
         "feature_importances": importances,
         "input_features": {
@@ -131,12 +162,14 @@ if __name__ == "__main__":
     result = predict_next_day()
     print(f"\nPrediction for day after {result['prediction_date']}:")
     print(f"  Predicted readiness: {result['predicted_readiness']}")
+    print(f"  Prediction source:   {result['prediction_source']}")
     if result["confidence"]:
         c = result["confidence"]
-        print(f"  Confidence range:    {c['range_low']} - {c['range_high']}")
+        if "range_low" in c:
+            print(f"  Empirical 80% range: {c['range_low']} - {c['range_high']}")
         print(f"  Model:               {c.get('best_model', '?')}")
-        print(f"  Model MAE:           {c['cv_mae']}")
-        print(f"  Model R²:            {c['cv_r2']}")
+        print(f"  Holdout MAE:         {c.get('holdout_mae', '?')}")
+        print(f"  Holdout R²:          {c.get('holdout_r2', '?')}")
         if c.get("sample_size_warning"):
             print("  WARNING: Model trained on < 50 samples — predictions may be unreliable")
     print("\nTop input features:")

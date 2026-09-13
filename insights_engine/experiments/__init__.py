@@ -1,1 +1,1 @@
-"""Experiment Tracker — log interventions and analyze their causal effects."""
+"""Experiment Tracker — log interventions and analyze observational changes."""

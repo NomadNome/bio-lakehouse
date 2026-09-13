@@ -31,6 +31,11 @@ CLAUDE_CONFIG = {
     # multi-CTE segmented-regression query). 4096 still intermittently
     # truncated the SQL-translation JSON mid-string; give real headroom.
     "max_tokens": 8192,
+    # Weekly narration is a synthesis task, so extended thinking only adds
+    # latency and can consume the entire output allowance before any report
+    # text is emitted. Keep the response bounded and reserve it for prose.
+    "weekly_report_max_tokens": 2500,
+    "weekly_report_timeout_seconds": 120,
 }
 
 # Chart Styling
@@ -117,6 +122,12 @@ WORKOUT_TSS_ESTIMATES = {
 
 # Body composition goal (set via env to keep personal targets out of code)
 BODY_FAT_GOAL_PCT = float(os.environ.get("BIO_BF_GOAL_PCT", "0"))
+
+# MyFitnessPal is an optional historical source. Disabling ingestion preserves
+# existing Bronze/Silver/Gold data while removing it from the daily critical path.
+MFP_ENABLED = os.environ.get("BIO_MFP_ENABLED", "true").strip().lower() in {
+    "1", "true", "yes"
+}
 
 OVERLOAD_THRESHOLDS = {
     "min_weeks": 4,

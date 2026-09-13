@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import pandas as pd
 
@@ -211,7 +211,7 @@ class FHIRBundleBuilder:
             "resourceType": "Bundle",
             "id": str(uuid.uuid4()),
             "type": "collection",
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "total": len(entries),
             "entry": entries,
         }

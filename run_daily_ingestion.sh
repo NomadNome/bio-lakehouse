@@ -22,7 +22,18 @@ if [ -f "$ENV_FILE" ]; then
 fi
 BIO_PREFIX="${BIO_PREFIX:-bio-lakehouse}"
 GOLD_DB="${BIO_ATHENA_DATABASE:-bio_gold}"
+STREAMLIT_PORT="${STREAMLIT_PORT:-8501}"
 PELOTON_EXPORT_PREFIX="${PELOTON_EXPORT_PREFIX:-KnownasNoma_}"
+BIO_MFP_ENABLED="${BIO_MFP_ENABLED:-true}"
+
+case "$BIO_MFP_ENABLED" in
+    1|true|TRUE|yes|YES) MFP_ENABLED=true ;;
+    0|false|FALSE|no|NO) MFP_ENABLED=false ;;
+    *)
+        echo "ERROR: BIO_MFP_ENABLED must be true or false (got: $BIO_MFP_ENABLED)" >&2
+        exit 2
+        ;;
+esac
 
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}"
 BUCKET="${BIO_PREFIX}-bronze-${AWS_ACCOUNT_ID}"
@@ -54,7 +65,10 @@ pick_newest() {
 
 HK_ZIP=$(pick_newest "export*.zip")
 PELO_CSV=$(pick_newest "${PELOTON_EXPORT_PREFIX}workouts*.csv")
-MFP_CSV=$(pick_newest "Nutrition-Summary*.csv" || true)
+MFP_CSV=""
+if [ "$MFP_ENABLED" = true ]; then
+    MFP_CSV=$(pick_newest "Nutrition-Summary*.csv" || true)
+fi
 
 if [ -z "$HK_ZIP" ]; then
     echo "  ERROR: No HealthKit export found in ~/Downloads/. Please export from your phone first."
@@ -82,11 +96,35 @@ fi
 
 echo "  HealthKit: $HK_ZIP"
 echo "  Peloton:   $PELO_CSV"
-if [ -n "$MFP_CSV" ]; then
+if [ "$MFP_ENABLED" = false ]; then
+    echo "  MFP:       disabled (historical Gold data preserved)"
+elif [ -n "$MFP_CSV" ]; then
     echo "  MFP:       $MFP_CSV"
 else
     echo "  MFP:       (none found — skipping)"
 fi
+
+# Mark ownership of downstream orchestration before any Bronze uploads can
+# complete an Oura normalizer. The EventBridge orchestrator reads this short-
+# lived lock and yields to this script, preventing duplicate Gold refreshes.
+PIPELINE_LOCK_URI="s3://${BUCKET}/control/manual-pipeline.lock"
+PIPELINE_LOCK_FILE="/tmp/${BIO_PREFIX}-manual-pipeline.lock"
+
+write_pipeline_lock() {
+    local expires_at="$1"
+    printf '{"batch_id":"%s","expires_at_epoch":%s}\n' "$BATCH_DATE" "$expires_at" > "$PIPELINE_LOCK_FILE"
+    aws s3 cp "$PIPELINE_LOCK_FILE" "$PIPELINE_LOCK_URI" \
+        --quiet --sse AES256 --region "$REGION"
+}
+
+clear_pipeline_lock() {
+    write_pipeline_lock 0 >/dev/null 2>&1 || true
+}
+
+LOCK_EXPIRES=$(date -v+3H +%s 2>/dev/null || date -d "+3 hours" +%s)
+write_pipeline_lock "$LOCK_EXPIRES"
+trap clear_pipeline_lock EXIT INT TERM
+echo "  Pipeline orchestration lock active until epoch ${LOCK_EXPIRES}."
 
 # -----------------------------------------------
 # STEP 2: Parse HealthKit Export
@@ -229,11 +267,12 @@ echo "--- Step 5: Run Glue Normalizers ---"
 start_or_attach() {
     local job_name="$1"; shift
     local run_id
-    run_id=$(aws glue start-job-run --job-name "$job_name" --region "$REGION" "$@" \
-        --query 'JobRunId' --output text 2>/dev/null)
-    if [ $? -eq 0 ] && [ -n "$run_id" ]; then
-        echo "$run_id"
-        return
+    if run_id=$(aws glue start-job-run --job-name "$job_name" --region "$REGION" "$@" \
+        --query 'JobRunId' --output text 2>/dev/null); then
+        if [ -n "$run_id" ]; then
+            echo "$run_id"
+            return
+        fi
     fi
     # ConcurrentRunsExceededException — attach to the existing RUNNING/STARTING run
     run_id=$(aws glue get-job-runs --job-name "$job_name" --region "$REGION" --max-results 5 \
@@ -254,10 +293,18 @@ HK_RUN=$(start_or_attach "${BIO_PREFIX}-healthkit-normalizer" \
 PELO_RUN=$(start_or_attach "${BIO_PREFIX}-peloton-normalizer" \
     --arguments '{"--source_bucket":"'"${BUCKET}"'","--source_type":"peloton"}')
 
-MFP_RUN=$(start_or_attach "${BIO_PREFIX}-mfp-normalizer" \
-    --arguments '{"--bronze_bucket":"'"${BUCKET}"'","--silver_bucket":"'"${BIO_PREFIX}"'-silver-'"${AWS_ACCOUNT_ID}"'"}')
+MFP_RUN=""
+if [ "$MFP_ENABLED" = true ]; then
+    MFP_RUN=$(start_or_attach "${BIO_PREFIX}-mfp-normalizer" \
+        --arguments '{"--bronze_bucket":"'"${BUCKET}"'","--silver_bucket":"'"${BIO_PREFIX}"'-silver-'"${AWS_ACCOUNT_ID}"'"}')
+fi
 
-echo "  Started/attached: Oura=$OURA_RUN  HK=$HK_RUN  Peloton=$PELO_RUN  MFP=$MFP_RUN"
+if [ "$MFP_ENABLED" = true ]; then
+    MFP_STATUS="$MFP_RUN"
+else
+    MFP_STATUS="SKIPPED"
+fi
+echo "  Started/attached: Oura=$OURA_RUN  HK=$HK_RUN  Peloton=$PELO_RUN  MFP=$MFP_STATUS"
 echo "  Polling (expect ~13 min for HealthKit)..."
 
 while true; do
@@ -267,23 +314,32 @@ while true; do
         --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
     PELO=$(aws glue get-job-run --job-name "${BIO_PREFIX}-peloton-normalizer" --run-id "$PELO_RUN" \
         --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
-    MFP=$(aws glue get-job-run --job-name "${BIO_PREFIX}-mfp-normalizer" --run-id "$MFP_RUN" \
-        --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
+    MFP="SKIPPED"
+    if [ "$MFP_ENABLED" = true ]; then
+        MFP=$(aws glue get-job-run --job-name "${BIO_PREFIX}-mfp-normalizer" --run-id "$MFP_RUN" \
+            --region "$REGION" --query 'JobRun.JobRunState' --output text | head -1)
+    fi
     echo "  $(date +%H:%M:%S) Oura=$OURA  HK=$HK  Peloton=$PELO  MFP=$MFP"
 
     FAILED=0
-    for state in "$OURA" "$HK" "$PELO" "$MFP"; do
+    for state in "$OURA" "$HK" "$PELO"; do
         case "$state" in
             FAILED|STOPPED|TIMEOUT|ERROR) FAILED=1 ;;
         esac
     done
+    if [ "$MFP_ENABLED" = true ]; then
+        case "$MFP" in
+            FAILED|STOPPED|TIMEOUT|ERROR) FAILED=1 ;;
+        esac
+    fi
     if [ "$FAILED" -eq 1 ]; then
         echo "  ERROR: A normalizer ended in a failed state (FAILED/STOPPED/TIMEOUT/ERROR). Check AWS Glue console."
         exit 1
     fi
 
     if [ "$OURA" = "SUCCEEDED" ] && [ "$HK" = "SUCCEEDED" ] && \
-       [ "$PELO" = "SUCCEEDED" ] && [ "$MFP" = "SUCCEEDED" ]; then
+       [ "$PELO" = "SUCCEEDED" ] && \
+       { [ "$MFP_ENABLED" = false ] || [ "$MFP" = "SUCCEEDED" ]; }; then
         break
     fi
     sleep 20
@@ -394,12 +450,10 @@ echo ""
 echo "--- Step 10: Restart Streamlit ---"
 
 cd "$PROJECT_DIR"
-# Kill existing Streamlit and restart in background (non-blocking)
-# Use nohup + disown so Streamlit survives when the pipeline script exits
-# (LaunchD kills child processes of completed jobs otherwise)
-/usr/sbin/lsof -ti :8501 | xargs kill -9 2>/dev/null || true
-sleep 1
-nohup bash run_streamlit.sh > /dev/null 2>&1 &
+# The launcher stops only the listener for this instance's port. Pass ENV_FILE
+# explicitly because it is a shell setting, not necessarily an exported value.
+# nohup + disown keep Streamlit alive after the scheduled pipeline exits.
+nohup env ENV_FILE="$ENV_FILE" bash run_streamlit.sh > /dev/null 2>&1 &
 disown
 echo "  Streamlit started (PID $!)"
 
@@ -446,8 +500,13 @@ fi
 echo ""
 echo "--- Step 13: Cleanup Old Files ---"
 
-# Keep only the 2 newest exports in inbox, delete the rest
-for pattern in "export*.zip" "${PELOTON_EXPORT_PREFIX}workouts*.csv" "Nutrition-Summary*.csv"; do
+# Keep only the 2 newest active-source exports in inbox. When MFP is disabled,
+# leave its local exports untouched as an additional historical backup.
+CLEANUP_PATTERNS=("export*.zip" "${PELOTON_EXPORT_PREFIX}workouts*.csv")
+if [ "$MFP_ENABLED" = true ]; then
+    CLEANUP_PATTERNS+=("Nutrition-Summary*.csv")
+fi
+for pattern in "${CLEANUP_PATTERNS[@]}"; do
     { ls -t "$INBOX"/$pattern 2>/dev/null || true; } | tail -n +3 | while read f; do
         rm "$f" && echo "  Deleted old: $(basename "$f")"
     done
@@ -465,5 +524,5 @@ echo "  Cleanup complete!"
 echo ""
 echo "========================================"
 echo "Daily ingestion COMPLETE!"
-echo "Streamlit: http://localhost:8501"
+echo "Streamlit: http://localhost:${STREAMLIT_PORT}"
 echo "========================================"
